@@ -10,7 +10,7 @@
 #define UPDATE_URL    "https://github.com/eyal282/AlliedmodsUpdater/edit/master/UsefulCommands/updatefile.txt"
 
 
-new const String:PLUGIN_VERSION[] = "2.3" // Actually 2.4
+new const String:PLUGIN_VERSION[] = "2.4" // Actually 2.4
 
 public Plugin:myinfo = 
 {
