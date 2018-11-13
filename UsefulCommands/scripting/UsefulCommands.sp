@@ -7,10 +7,10 @@
 #include <clientprefs>
 #undef REQUIRE_PLUGIN
 #tryinclude <updater>
-#define UPDATE_URL    "https://github.com/eyal282/AlliedmodsUpdater/edit/master/UsefulCommands/updatefile.txt"
+#define UPDATE_URL    "https://github.com/eyal282/AlliedmodsUpdater/blob/master/UsefulCommands/updatefile.txt"
 
 
-new const String:PLUGIN_VERSION[] = "2.4" // Actually 2.4
+new const String:PLUGIN_VERSION[] = "2.4"
 
 public Plugin:myinfo = 
 {
@@ -18,7 +18,7 @@ public Plugin:myinfo =
 	author = "Eyal282",
 	description = "Useful commands.",
 	version = PLUGIN_VERSION,
-	url = "None."
+	url = "https://forums.alliedmods.net/showthread.php?p=2617618"
 }
 
 #define COMMAND_FILTER_NONE 0
