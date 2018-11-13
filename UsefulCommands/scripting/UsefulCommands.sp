@@ -7,7 +7,7 @@
 #include <clientprefs>
 #undef REQUIRE_PLUGIN
 #tryinclude <updater>
-#define UPDATE_URL    "https://github.com/eyal282/AlliedmodsUpdater/blob/master/UsefulCommands/updatefile.txt"
+#define UPDATE_URL    "https://raw.githubusercontent.com/eyal282/AlliedmodsUpdater/master/UsefulCommands/updatefile.txt"
 
 
 new const String:PLUGIN_VERSION[] = "2.4"
