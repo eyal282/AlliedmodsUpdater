@@ -237,6 +237,13 @@ public OnPluginStart()
 	#endif
 }
 
+#if defined _updater_included
+public Updater_OnPluginUpdated()
+{
+	ReloadPlugin(INVALID_HANDLE);
+	LogError("Useful Commands Updated");
+}
+#endif
 public OnLibraryAdded(const String:name[])
 {
 	#if defined _updater_included
