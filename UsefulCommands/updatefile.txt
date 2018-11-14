@@ -2,7 +2,7 @@
 {
 	"Version"
 	{
-		"Latest"	"2.4"
+		"Latest"	"2.5"
 	}
 	
 	"Notes"	"Useful Commands is now updated to version 2.4"
