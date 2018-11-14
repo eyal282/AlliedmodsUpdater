@@ -1,3 +1,17 @@
+// OUTDATED //
+// OUTDATED //
+// OUTDATED //
+// OUTDATED //
+// OUTDATED //
+// OUTDATED //
+// OUTDATED //
+// OUTDATED //
+// OUTDATED //
+// OUTDATED //
+// For up-to date, use: https://forums.alliedmods.net/showthread.php?p=2617618 //
+
+
+
 // To do: Make more stats update instantly such as K/D ratio.
 
 #include <sourcemod>
