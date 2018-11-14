@@ -12,6 +12,4 @@
 "Files"
 {
 	"Plugin"	"Path_SM/plugins/UsefulCommands.smx"
-	
-	"Source"	"Path_SM/scripting/UsefulCommands.sp"
 }
