@@ -1,17 +1,3 @@
-// OUTDATED //
-// OUTDATED //
-// OUTDATED //
-// OUTDATED //
-// OUTDATED //
-// OUTDATED //
-// OUTDATED //
-// OUTDATED //
-// OUTDATED //
-// OUTDATED //
-// For up-to date, use: https://forums.alliedmods.net/showthread.php?p=2617618 //
-
-
-
 // To do: Make more stats update instantly such as K/D ratio.
 
 #include <sourcemod>
@@ -23,8 +9,9 @@
 #tryinclude <updater>  // Comment out this line to remove updater support by force.
 #define UPDATE_URL    "https://raw.githubusercontent.com/eyal282/AlliedmodsUpdater/master/UsefulCommands/updatefile.txt"
 
+//#define TEST
 
-new const String:PLUGIN_VERSION[] = "2.4"
+new const String:PLUGIN_VERSION[] = "2.6"
 
 public Plugin:myinfo = 
 {
@@ -111,9 +98,9 @@ new Float:DeathOrigin[MAXPLAYERS+1][3];
 
 new bool:UberSlapped[MAXPLAYERS+1], TotalSlaps[MAXPLAYERS+1];
 
-//new Handle:hcv_svCheats = INVALID_HANDLE;
 new Handle:hcv_PartyMode = INVALID_HANDLE;
 new Handle:hcv_mpAnyoneCanPickupC4 = INVALID_HANDLE;
+//new Handle:hcv_svCheats = INVALID_HANDLE;
 //new svCheatsFlags = 0;
 
 new Handle:hcv_ucSpecialC4Rules = INVALID_HANDLE;
@@ -197,15 +184,13 @@ public APLRes:AskPluginLoad2(Handle:myself, bool:bLate, String:error[], length)
 }
 public OnPluginStart()
 {
-	//AddNormalSoundHook(Test);
 	GameName = GetEngineVersion();
 	
-	//AddCommandListener(Test, "kick");
-	//AddCommandListener(Test, "kickid");
 	//hcv_svCheats = FindConVar("sv_cheats");
 	
-//	svCheatsFlags = GetConVarFlags(hcv_svCheats);
+	//svCheatsFlags = GetConVarFlags(hcv_svCheats);
 	
+
 	if(isLateLoaded)
 	{
 
@@ -242,6 +227,8 @@ public OnPluginStart()
 		if(!IsSoundPrecached(ItemPickUpSound))
 			PrecacheSoundAny(ItemPickUpSound);
 	}
+	
+	LoadTranslations("common.phrases");
 	
 	#if defined _updater_included
 	if (LibraryExists("updater"))
@@ -341,8 +328,8 @@ public OnAllPluginsLoaded()
 	if(!CommandExists("sm_disarm"))
 		RegAdminCmd("sm_disarm", Command_Disarm, ADMFLAG_BAN, "strips all of the player's weapons");	
 		
-	if(!CommandExists("sm_cheat"))
-		RegAdminCmd("sm_cheat", Command_Cheat, ADMFLAG_CHEATS, "Writes a command bypassing its cheat flag.");	
+	//if(!CommandExists("sm_cheat"))
+		//RegAdminCmd("sm_cheat", Command_Cheat, ADMFLAG_CHEATS, "Writes a command bypassing its cheat flag.");	
 		
 	if(!CommandExists("sm_last"))
 		RegAdminCmd("sm_last", Command_Last, ADMFLAG_BAN, "Shows a full list of every single player that ever visited");
@@ -360,7 +347,10 @@ public OnAllPluginsLoaded()
 		RegAdminCmd("sm_bruteexec", Command_BruteExec, ADMFLAG_BAN, "Makes a player execute a command with !fakeexec but letting him have admin flags to accomplish the action. Use !exec if doesn't work.");
 		
 	if(!CommandExists("sm_xyz"))
-		RegConsoleCmd("sm_xyz", Command_XYZ, "Prints your origin.");	
+		RegAdminCmd("sm_xyz", Command_XYZ, ADMFLAG_GENERIC, "Prints your origin.");	
+		
+	if(!CommandExists("sm_silentcvar"))
+		RegAdminCmd("sm_silentcvar", Command_SilentCvar, ADMFLAG_ROOT, "Changes cvar without in-game notification."); // I cannot afford to allow less than Root as I cannot monitor protected cvars. Changing access flag means the admin can get rcon_password.
 		
 	if(!CommandExists("sm_hug"))
 		RegConsoleCmd("sm_hug", Command_Hug, "Hugs a dead player.");
@@ -734,7 +724,10 @@ public Action:Event_PlayerUse(Handle:hEvent, const String:Name[], bool:dontBroad
 		
 	new client = GetClientOfUserId(GetEventInt(hEvent, "userid"));
 	
-	if(!IsValidPlayer(client) || !IsPlayerAlive(client))
+	if(client == 0)
+		return;
+		
+	else if(!IsPlayerAlive(client))
 		return;
 	
 	new entity = GetEventInt(hEvent, "entity");
@@ -757,7 +750,16 @@ public Action:Event_PlayerUse(Handle:hEvent, const String:Name[], bool:dontBroad
 	
 	AcceptEntityInput(entity, "Kill");
 	
-	GivePlayerItem(client, "weapon_c4");
+	if(GetClientTeam(client) == CS_TEAM_CT)
+	{
+		SetEntProp(client, Prop_Send, "m_iTeamNum", CS_TEAM_T);
+				
+		GivePlayerItem(client, "weapon_c4");
+				
+		SetEntProp(client, Prop_Send, "m_iTeamNum", CS_TEAM_CT);
+	}
+	else
+		GivePlayerItem(client, "weapon_c4");
 	
 	/*
 	
@@ -1102,15 +1104,11 @@ public Action:Event_PlayerDeath(Handle:hEvent, const String:Name[], bool:dontBro
 	new attackerUserId = GetEventInt(hEvent, "attacker");
 	new attacker = GetClientOfUserId(attackerUserId);
 	
-	if(isCSGO())
-	{
-		//SDKCall(
-	}
 	new Team = GetClientTrueTeam(client);
 	
 	if(Team != CS_TEAM_CT && Team != CS_TEAM_T)
 		return;
-	
+		
 	new candidateCT = 0;
 	
 	if(AceCandidate[CS_TEAM_CT] > 0)
@@ -1130,26 +1128,28 @@ public Action:Event_PlayerDeath(Handle:hEvent, const String:Name[], bool:dontBro
 		if(candidateCT > 0 && Team == CS_TEAM_T)
 			AceCandidate[CS_TEAM_CT] = -2; // Forbid possibility of Ace for the attacker's team.
 	}
-	
-	new attackerTeam = GetClientTeam(attacker);
-	
-	if(candidateT != 0)
+	else
 	{
-		if(candidateT != attacker && Team == CS_TEAM_CT)
-			AceCandidate[CS_TEAM_T] = -2; // Forbid possibility of Ace for the attacker's team.
-
-	}
-	else if(attackerTeam == CS_TEAM_T)
-		AceCandidate[attackerTeam] = attackerUserId; // Ace Candidate is only fullfilled in case all opponents are dead at time of victory.
-
-	if(candidateCT != 0)
-	{
-		if(candidateCT != attacker && Team == CS_TEAM_T)
-			AceCandidate[CS_TEAM_CT] = -2; // Forbid possibility of Ace for the attacker's team.
-	}
-	else if(attackerTeam == CS_TEAM_CT)
-		AceCandidate[attackerTeam] = attackerUserId; // Ace Candidate is only fullfilled in case all opponents are dead at time of victory.
-		
+		new attackerTeam = GetClientTeam(attacker);
+	
+		if(candidateT != 0)
+		{
+			if(candidateT != attacker && Team == CS_TEAM_CT)
+			{
+				AceCandidate[CS_TEAM_T] = -2; // Forbid possibility of Ace for the attacker's team.
+			}
+		}
+		else if(attackerTeam == CS_TEAM_T && AceCandidate[CS_TEAM_T] == -1)
+			AceCandidate[CS_TEAM_T] = attackerUserId; // Ace Candidate is only fullfilled in case all opponents are dead at time of victory.
+			
+		if(candidateCT != 0)
+		{
+			if(candidateCT != attacker && Team == CS_TEAM_T)
+				AceCandidate[CS_TEAM_CT] = -2; // Forbid possibility of Ace for the attacker's team.
+		}
+		else if(attackerTeam == CS_TEAM_CT && AceCandidate[CS_TEAM_CT] == -1)
+			AceCandidate[CS_TEAM_CT] = attackerUserId; // Ace Candidate is only fullfilled in case all opponents are dead at time of victory.
+	}		
 	UberSlapped[client] = false;
 	if(TIMER_UBERSLAP[client] != INVALID_HANDLE)
 	{
@@ -1384,6 +1384,7 @@ public Event_WeaponDropPost(client, weapon)
 	
 	else if(weapon == -1)
 		return;
+		
 	new String:Classname[50];
 	GetEdictClassname(weapon, Classname, sizeof(Classname));
 	
@@ -1392,6 +1393,11 @@ public Event_WeaponDropPost(client, weapon)
 		
 	LastC4Ref[client] = EntIndexToEntRef(weapon);
 	
+	if(TIMER_LASTC4[client] != INVALID_HANDLE)
+	{
+		CloseHandle(TIMER_LASTC4[client]);
+		TIMER_LASTC4[client] = INVALID_HANDLE;
+	}	
 	TIMER_LASTC4[client] = CreateTimer(5.0, GiveC4Back, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
 }
 
@@ -2078,6 +2084,12 @@ public Action:Command_Give(client, args)
 			else
 				weapon = GivePlayerItem(target, arg2);
 		}
+		else if(StrEqual(arg2, "weapon_defuser"))
+		{
+			arg2 = "item_defuser";
+			
+			weapon = -1;
+		}
 		else if((weapon = GivePlayerItem(target, arg2)) == -1)
 		{
 			ReplyToCommand(client, "[SM] Weapon %s does not exist.", WeaponName);
@@ -2087,9 +2099,12 @@ public Action:Command_Give(client, args)
 			return Plugin_Handled;
 		}
 		
-		RemovePlayerItem(client, weapon);
-		
-		AcceptEntityInput(weapon, "Kill");
+		if(weapon != -1)
+		{
+			RemovePlayerItem(target, weapon);
+			
+			AcceptEntityInput(weapon, "Kill");
+		}
 		weapon = CreateEntityByName("game_player_equip");
 	
 		DispatchKeyValue(weapon, arg2, "1");
@@ -2464,7 +2479,7 @@ public Action:Command_Disarm(client, args)
 }
 
 
-
+/*
 public Action:Command_Cheat(client, args)
 {
 	if (args < 1)
@@ -2481,7 +2496,7 @@ public Action:Command_Cheat(client, args)
 	
 	return Plugin_Handled;
 }
-
+*/
 public Action:Command_Last(client, args)
 {
 	SQL_TQuery(dbLocal, SQLCB_LastConnected, "SELECT * FROM UsefulCommands_LastPlayers ORDER BY LastConnect DESC", GetClientUserId(client)); 
@@ -3037,6 +3052,8 @@ public Action:Command_Hug(client, args)
 		ReplyToCommand(client, "[SM] This command can only be used by living players.");
 		return Plugin_Handled;
 	}
+	
+
 	new Float:Origin[3], ClosestRagdoll = -1, Float:WinningDistance = -1.0, WinningPlayer = -1;
 	GetEntPropVector(client, Prop_Data, "m_vecOrigin", Origin);
 	
@@ -3118,6 +3135,58 @@ public Action:Command_XYZ(client, args)
 	
 	PrintToChat(client, "X, Y, Z = %.3f, %.3f, %3f", Origin[0], Origin[1], Origin[2]);
 	
+	return Plugin_Handled;
+}
+
+// Stolen from official SM plugin basecommands.sp.
+
+public Action:Command_SilentCvar(client, args)
+{
+	if(args < 1)
+	{
+		ReplyToCommand(client, "[SM] Usage: sm_silentcvar <cvar> [value]");
+		return Plugin_Handled;
+	}
+
+	new String:cvarname[64];
+	GetCmdArg(1, cvarname, sizeof(cvarname));
+	
+	new ConVar:hndl = FindConVar(cvarname);
+	
+	if(hndl == null)
+	{
+		ReplyToCommand(client, "[SM] %t", "Unable to find cvar", cvarname);
+		return Plugin_Handled;
+	}
+
+	new String:value[255];
+	
+	if(args < 2)
+	{
+		hndl.GetString(value, sizeof(value));
+
+		ReplyToCommand(client, "[SM] %t", "Value of cvar", cvarname, value);
+		return Plugin_Handled;
+	}
+
+	GetCmdArg(2, value, sizeof(value));
+	
+	// The server passes the values of these directly into ServerCommand, following exec. Sanitize.
+	if(StrEqual(cvarname, "servercfgfile", false) || StrEqual(cvarname, "lservercfgfile", false))
+	{
+		new pos = StrContains(value, ";", true);
+		if(pos != -1)
+		{
+			value[pos] = '\0';
+		}
+	}
+	
+	ReplyToCommand(client, "[SM] %t", "Cvar changed", cvarname, value);
+
+	LogAction(client, -1, "\"%L\" changed cvar (cvar \"%s\") (value \"%s\")", client, cvarname, value);
+
+	hndl.SetString(value, true);
+
 	return Plugin_Handled;
 }
 
@@ -3633,7 +3702,7 @@ stock SetClientAceFunFact(client, String:value[])
 	SetClientCookie(client, hCookie_AceFunFact, value);
 }
 
-
+/*
 stock UC_CheatCommand(client, String:buffer[], any:...)
 {
 	if(client == 0)
@@ -3642,17 +3711,32 @@ stock UC_CheatCommand(client, String:buffer[], any:...)
 	new String:CommandArgs[256];
 	VFormat(CommandArgs, sizeof(CommandArgs), buffer, 3);
 	
-	new String:FirstCommand[50];                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
-	BreakString(CommandArgs, FirstCommand, sizeof(FirstCommand));
 	
-	new flags = GetCommandFlags(FirstCommand);
-	SetCommandFlags(FirstCommand, (flags & ~FCVAR_CHEAT));
-		
+	new Handle:convar = FindConVar(CommandArgs);
+	
+	if(convar != INVALID_HANDLE)
+		SetConVarFlags(FindConVar(, (svCheatsFlags^(FCV));
+	
+	new bool:svCheats = GetConVarBool(hcv_svCheats);
+	
+	SetConVarBool(hcv_svCheats, true);
+	
 	FakeClientCommand(client, CommandArgs);
-		
-	SetCommandFlags(FirstCommand, flags);
+			
+	SetConVarBool(hcv_svCheats, svCheats);
+	
+	SetConVarFlags(hcv_svCheats, svCheatsFlags);
+
+	RemoveCommandListener(BlockAllServerCommands);
 }
 
+public Action:BlockAllServerCommands(client, const String:Command[], args)
+{
+	PrintToChatAll("l %s", Command);
+	
+	return Plugin_Handled;
+}
+*/
 stock CreateDefuseBalloons(client, Float:time=5.0)
 {
 	new particle = CreateEntityByName("info_particle_system");
