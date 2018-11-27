@@ -2,11 +2,11 @@
 {
 	"Version"
 	{
-		"Latest"	"2.5"
+		"Latest"	"2.6"
 	}
 	
-	"Notes"	"Useful Commands is now updated to version 2.4"
-	"Notes"	"Supporting !hug on Counter Strike: Source."
+	"Notes"	"Useful Commands is now updated to version 2.6"
+	"Notes"	"New command named sm_silentcvar allows root admins to silently"
 }
 	
 "Files"
