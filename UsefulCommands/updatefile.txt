@@ -2,11 +2,11 @@
 {
 	"Version"
 	{
-		"Latest"	"2.6"
+		"Latest"	"2.7"
 	}
 	
-	"Notes"	"Useful Commands is now updated to version 2.6"
-	"Notes"	"New command named sm_silentcvar allows root admins to silently"
+	"Notes"	"Useful Commands is now updated to version 2.7"
+	"Notes"	"Check https://forums.alliedmods.net/showthread.php?p=2617618#post2617618 for more info."
 }
 	
 "Files"
