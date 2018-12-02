@@ -1,17 +1,25 @@
-// To do: Make more stats update instantly such as K/D ratio.
+// To do: Add weapon stats comparison based on what I used with Big Bertha
 
 #include <sourcemod>
 #include <sdkhooks>
 #include <sdktools>
 #include <cstrike>
 #include <clientprefs>
+
+#define HEADSHOT_MULTIPLIER 4.0
+#define STOMACHE_MULTIPLIER 1.25
+#define CHEST_MULTIPLIER 1.0
+#define LEGS_MULTIPLIER 0.75 // Also legs are immune to kevlar and yes, bizon is stronger on legs than kevlar chest.
+
+#define HUD_PRINTCENTER        4 
+
 #undef REQUIRE_PLUGIN
 #tryinclude <updater>  // Comment out this line to remove updater support by force.
 #define UPDATE_URL    "https://raw.githubusercontent.com/eyal282/AlliedmodsUpdater/master/UsefulCommands/updatefile.txt"
 
 //#define TEST
 
-new const String:PLUGIN_VERSION[] = "2.6"
+new const String:PLUGIN_VERSION[] = "2.7";
 
 public Plugin:myinfo = 
 {
@@ -145,6 +153,7 @@ new bool:FullInGame[MAXPLAYERS+1];
 new Float:LastHeight[MAXPLAYERS+1];
 
 new Handle:hRestartTimer = INVALID_HANDLE;
+new Handle:hRRTimer = INVALID_HANDLE;
 
 new bool:Restart = false;
 
@@ -175,9 +184,48 @@ new const GlowData[][enGlow] =
 {
 	{ "Red", 255, 0, 0 },
 	{ "Blue", 0, 0, 255 },
+	{ "TAGrenade", 154, 50, 50 },
 	{ "White", 255, 255, 255 } // White won't work in CSS.
 };
 
+enum enWepStatsList
+{
+	wepStatsDamage,
+	wepStatsFireRate,
+	Float:wepStatsArmorPenetration,
+	wepStatsKillAward,
+	Float:wepStatsWallPenetration,
+	wepStatsDamageDropoff,
+	wepStatsMaxDamageRange,
+	wepStatsPalletsPerShot, // For shotguns
+	wepStatsTapDistanceNoArmor,
+	wepStatsTapDistanceArmor,
+	bool:wepStatsIsAutomatic
+};	
+new wepStatsList[CSWeapon_MAX_WEAPONS_NO_KNIFES][enWepStatsList];
+
+new CSWeaponID:wepStatsIgnore[] =
+{
+	CSWeapon_C4,
+	CSWeapon_KNIFE,
+	CSWeapon_SHIELD,
+	CSWeapon_KEVLAR,
+	CSWeapon_ASSAULTSUIT,
+	CSWeapon_NIGHTVISION,
+	CSWeapon_KNIFE_GG,
+	CSWeapon_DEFUSER,
+	CSWeapon_HEAVYASSAULTSUIT,
+	CSWeapon_CUTTERS,
+	CSWeapon_HEALTHSHOT,
+	CSWeapon_KNIFE_T,
+	CSWeapon_HEGRENADE,
+	CSWeapon_TAGGRENADE,
+	CSWeapon_FLASHBANG,
+	CSWeapon_DECOY,
+	CSWeapon_SMOKEGRENADE,
+	CSWeapon_INCGRENADE,
+	CSWeapon_MOLOTOV
+}
 public APLRes:AskPluginLoad2(Handle:myself, bool:bLate, String:error[], length)
 {
 	isLateLoaded = bLate;
@@ -299,16 +347,28 @@ public OnAllPluginsLoaded()
 		RegAdminCmd("sm_uberslap", Command_UberSlap, ADMFLAG_BAN, "Slaps a player 100 times, leaving him with 1 hp");	
 	
 	if(!CommandExists("sm_heal"))
-		RegAdminCmd("sm_heal", Command_Heal, ADMFLAG_BAN, "Heals a player.");
+		RegAdminCmd("sm_heal", Command_Heal, ADMFLAG_BAN, "Allows to either heal a player, give him armor or a helmet.");
 		
 	if(!CommandExists("sm_give"))
 		RegAdminCmd("sm_give", Command_Give, ADMFLAG_CHEATS, "Give a weapon for a player.");
 		
 	if(!CommandExists("sm_rr"))
-		RegAdminCmd("sm_rr", Command_RestartRound, ADMFLAG_CHANGEMAP, "Give a weapon for a player.");
+		RegAdminCmd("sm_rr", Command_RestartRound, ADMFLAG_CHANGEMAP, "Restarts the round.");
+		
+	if(!CommandExists("sm_restartround"))
+		RegAdminCmd("sm_restartround", Command_RestartRound, ADMFLAG_CHANGEMAP, "Restarts the round.");
+		
+	if(!CommandExists("sm_rg"))
+		RegAdminCmd("sm_rg", Command_RestartGame, ADMFLAG_CHANGEMAP, "Restarts the game.");
+		
+	if(!CommandExists("sm_restartgame"))
+		RegAdminCmd("sm_restartgame", Command_RestartGame, ADMFLAG_CHANGEMAP, "Restarts the game.");
 		
 	if(!CommandExists("sm_restart"))
-		RegAdminCmd("sm_restart", Command_RestartServer, ADMFLAG_CHANGEMAP, "Give a weapon for a player.");
+		RegAdminCmd("sm_restart", Command_RestartServer, ADMFLAG_CHANGEMAP, "Restarts the server after 5 seconds. Type again to abort restart.");
+		
+	if(!CommandExists("sm_restartserver"))
+		RegAdminCmd("sm_restartserver", Command_RestartServer, ADMFLAG_CHANGEMAP, "Restarts the server after 5 seconds. Type again to abort restart.");
 		
 	if(!CommandExists("sm_glow"))
 		RegAdminCmd("sm_glow", Command_Glow, ADMFLAG_BAN, "Puts glow on a player for all to see.");
@@ -386,7 +446,10 @@ public OnAllPluginsLoaded()
 			hcv_ucMinChickenTime = CreateConVar("uc_min_chicken_time", "5.0", "Minimum amount of time between a chicken's death and the recreation.");
 			hcv_ucMaxChickenTime = CreateConVar("uc_max_chicken_time", "10.0", "Maximum amount of time between a chicken's death and the recreation.");
 		}
-	}
+		
+		if(!CommandExists("sm_wepstats"))
+			RegConsoleCmd("sm_wepstats", Command_WepStats, "Shows the stats of all weapons");
+	}	
 		
 	HookEvent("player_spawn", Event_PlayerSpawn, EventHookMode_Post);
 	HookEvent("player_death", Event_PlayerDeath, EventHookMode_Post);
@@ -500,8 +563,164 @@ public Event_TeleportSpawnPost(entity)
 
 public OnConfigsExecuted()
 {
-	if(isCSGO())
-		SetConVarInt(hcv_mpAnyoneCanPickupC4, GetConVarInt(hcv_ucSpecialC4Rules));
+	if(!isCSGO())
+		return;
+	
+	SetConVarInt(hcv_mpAnyoneCanPickupC4, GetConVarInt(hcv_ucSpecialC4Rules));
+	
+	new Handle:keyValues = CreateKeyValues("items_game")
+	
+	if(!FileToKeyValues(keyValues, "scripts/items/items_game.txt"))
+		return;
+	
+	if(!KvGotoFirstSubKey(keyValues))
+		return;
+	
+	new WepNone = view_as<int>(CSWeapon_NONE);
+	
+	new String:buffer[64];
+	while(KvGotoNextKey(keyValues))
+	{
+		KvGetSectionName(keyValues, buffer, sizeof(buffer));
+	
+		if(StrEqual(buffer, "prefabs"))
+		{
+			KvGotoFirstSubKey(keyValues);
+			break;
+		}
+	}
+	
+	// Now we save position of prefabs and find all default values for damage, fire rate, and etc.
+	
+	KvSavePosition(keyValues);
+	
+	while(KvGotoNextKey(keyValues))
+	{
+		KvGetSectionName(keyValues, buffer, sizeof(buffer));
+	
+		if(StrEqual(buffer, "statted_item_base"))
+		{
+			KvGotoFirstSubKey(keyValues);
+			break;
+		}
+	}
+	
+	while(KvGotoNextKey(keyValues))
+	{
+		KvGetSectionName(keyValues, buffer, sizeof(buffer));
+	
+		if(StrEqual(buffer, "attributes"))
+		{
+			KvGotoFirstSubKey(keyValues);
+			break;
+		}
+	}
+	
+	// Default values.
+	wepStatsList[WepNone][wepStatsFireRate] = RoundFloat((1.0 / KvGetFloat(keyValues, "cycletime", -1.0)) * 60.0); // By RPM = Rounds per Minute. Note: NEVER ALLOW DEFAULT VALUE 0.0 WHEN DIVIDING IT!!!
+	wepStatsList[WepNone][wepStatsArmorPenetration] = KvGetFloat(keyValues, "armor ratio") * 50.0; // It maxes at 2.000 to be 100% armor penetration.
+	wepStatsList[WepNone][wepStatsKillAward] = KvGetNum(keyValues, "kill award");
+	wepStatsList[WepNone][wepStatsWallPenetration] = KvGetFloat(keyValues, "penetration");
+	wepStatsList[WepNone][wepStatsDamageDropoff] = RoundFloat(100.0 - KvGetFloat(keyValues, "range modifier") * 100.0);
+	wepStatsList[WepNone][wepStatsMaxDamageRange] = KvGetNum(keyValues, "range");
+	wepStatsList[WepNone][wepStatsPalletsPerShot] = KvGetNum(keyValues, "bullets");
+	wepStatsList[WepNone][wepStatsDamage] = KvGetNum(keyValues, "damage");
+	wepStatsList[WepNone][wepStatsIsAutomatic] = view_as<bool>(KvGetNum(keyValues, "is full auto"));
+	
+	KvGoBack(keyValues);
+	
+	new String:CompareBuffer[64], String:Alias[20];
+	while(KvGotoNextKey(keyValues))
+	{
+		KvGetSectionName(keyValues, buffer, sizeof(buffer));
+
+		if(StrContains(buffer, "_prefab") != -1 && strncmp(buffer, "weapon_", 7) == 0)
+		{
+			new CSWeaponID:i
+			for(i=CSWeapon_NONE;i < CSWeapon_MAX_WEAPONS_NO_KNIFES;i++) // Loop all weapons.
+			{
+				if(CS_IsValidWeaponID(i)) // I don't like using continue in two loops.
+				{
+					if(CS_WeaponIDToAlias(i, Alias, sizeof(Alias)) != 0) // iDunno...
+					{
+						Format(CompareBuffer, sizeof(CompareBuffer), "weapon_%s_prefab", Alias);
+				
+						if(StrEqual(buffer, CompareBuffer)) // We got a match!
+						{
+							KvSavePosition(keyValues); // Save our position.
+							KvGotoFirstSubKey(keyValues);
+							
+							while(KvGotoNextKey(keyValues)) // Find them attributes.
+							{
+								KvGetSectionName(keyValues, buffer, sizeof(buffer)); // We can overwrite the last buffer we took, it's irrelevant now :D
+	
+								if(StrEqual(buffer, "attributes"))
+								{
+									KvGotoFirstSubKey(keyValues);
+									break;
+								}
+							}
+							
+							wepStatsList[i][wepStatsFireRate] = RoundFloat((1.0 / KvGetFloat(keyValues, "cycletime", -1.0)) * 60.0); // By RPM = Rounds per Minute. Note: NEVER ALLOW DEFAULT VALUE 0.0 WHEN DIVIDING IT!!!
+							
+							if(wepStatsList[i][wepStatsFireRate] == -60)
+								wepStatsList[i][wepStatsFireRate] = wepStatsList[WepNone][wepStatsFireRate];
+							
+							wepStatsList[i][wepStatsArmorPenetration] = KvGetFloat(keyValues, "armor ratio", -1.0) * 50.0; // It maxes at 2.000 to be 100% armor penetration.
+							
+							if(wepStatsList[i][wepStatsArmorPenetration] == -50.0)
+								wepStatsList[i][wepStatsArmorPenetration] = wepStatsList[WepNone][wepStatsArmorPenetration];
+								
+							wepStatsList[i][wepStatsKillAward] = KvGetNum(keyValues, "kill award", wepStatsList[WepNone][wepStatsKillAward]); // It maxes at 2.000 to be 100% armor penetration.
+							
+							wepStatsList[i][wepStatsWallPenetration] = KvGetFloat(keyValues, "penetration", wepStatsList[WepNone][wepStatsWallPenetration]);
+							
+							new Float:Range;
+							wepStatsList[i][wepStatsDamageDropoff] = RoundFloat(100.0 - (Range=KvGetFloat(keyValues, "range modifier")) * 100.0);
+							
+							if(FloatCompare(Range, 100.0) == 0)
+							{
+								wepStatsList[i][wepStatsDamageDropoff] = wepStatsList[WepNone][wepStatsDamageDropoff];
+								Range = (100.0 - float(wepStatsList[i][wepStatsDamageDropoff])) / 100.0;
+							}	
+							wepStatsList[i][wepStatsMaxDamageRange] = KvGetNum(keyValues, "range", wepStatsList[WepNone][wepStatsMaxDamageRange]);
+							wepStatsList[i][wepStatsPalletsPerShot] = KvGetNum(keyValues, "bullets", wepStatsList[WepNone][wepStatsPalletsPerShot]);
+							wepStatsList[i][wepStatsDamage] = KvGetNum(keyValues, "damage", wepStatsList[WepNone][wepStatsDamage]) * wepStatsList[i][wepStatsPalletsPerShot];
+							wepStatsList[i][wepStatsIsAutomatic] = view_as<bool>(KvGetNum(keyValues, "is full auto", wepStatsList[WepNone][wepStatsIsAutomatic]));
+							// Now we calculate one tap distance. 
+							
+							if(FloatCompare(Range, 0.0) == 0 || FloatCompare(Range, 1.0) == 0)
+								Range = 0.000001; // Close to zero but nyeahhhh
+								
+							if(float(wepStatsList[i][wepStatsDamage]) * HEADSHOT_MULTIPLIER < 100.0) // IMPOSSIBLE!!!
+								wepStatsList[i][wepStatsTapDistanceNoArmor] = 0; // -1 = impossible to 1 tap.
+								
+							else
+								wepStatsList[i][wepStatsTapDistanceNoArmor] = RoundFloat(Logarithm((100.0 / (wepStatsList[i][wepStatsDamage] * HEADSHOT_MULTIPLIER)) , Range)*500.0);
+							
+							if(wepStatsList[i][wepStatsTapDistanceNoArmor] > wepStatsList[i][wepStatsMaxDamageRange])
+								wepStatsList[i][wepStatsTapDistanceNoArmor] = wepStatsList[i][wepStatsMaxDamageRange];
+								
+							if(float(wepStatsList[i][wepStatsDamage]) * HEADSHOT_MULTIPLIER * (wepStatsList[i][wepStatsArmorPenetration] / 100.0) < 100.0) // IMPOSSIBLE!!!
+								wepStatsList[i][wepStatsTapDistanceArmor] = 0; // -1 = impossible to 1 tap.
+								
+							else
+								wepStatsList[i][wepStatsTapDistanceArmor] = RoundFloat(Logarithm((100.0 / (wepStatsList[i][wepStatsDamage] * HEADSHOT_MULTIPLIER * (wepStatsList[i][wepStatsArmorPenetration] / 100.0))) , Range)*500.0);
+								
+							if(wepStatsList[i][wepStatsTapDistanceArmor] > wepStatsList[i][wepStatsMaxDamageRange])
+								wepStatsList[i][wepStatsTapDistanceArmor] = wepStatsList[i][wepStatsMaxDamageRange];
+								
+							KvGoBack(keyValues);
+							i = CSWeapon_MAX_WEAPONS_NO_KNIFES; // Equivalent of break.
+						}
+					}
+				}
+			}
+		}
+	}
+
+	CloseHandle(keyValues);
+
 }
 	
 public OnSpecialC4RulesChanged(Handle:convar, const String:oldValue[], const String:newValue[])
@@ -1076,6 +1295,7 @@ public PartyModeMenu_Handler(Handle:hMenu, MenuAction:action, client, item)
 public Action:Event_PlayerSpawn(Handle:hEvent, const String:Name[], bool:dontBroadcast)
 {	
 	new client = GetClientOfUserId(GetEventInt(hEvent, "userid"));
+
 	UberSlapped[client] = false;
 	RequestFrame(ResetTrueTeam, GetClientUserId(client));
 	if(TIMER_UBERSLAP[client] != INVALID_HANDLE)
@@ -1620,6 +1840,7 @@ public OnMapStart()
 	}
 	
 	hRestartTimer = INVALID_HANDLE;
+	hRRTimer = INVALID_HANDLE;
 	Restart = false;
 	
 }
@@ -1954,15 +2175,19 @@ public Action:Timer_UberSlap(Handle:hTimer, UserId)
 
 public Action:Command_Heal(client, args)
 {
-	if (args < 1)
+	if (args < 2)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_heal <#userid|name> [health]");
+		ReplyToCommand(client, "[SM] Usage: sm_heal <#userid|name> [health] [vest] [helmet:1/0]");
+		ReplyToCommand(client, "[SM] Note: Use \"max\" to fully heal. Use letters to ignore values.");
 		return Plugin_Handled;
 	}
 
-	new String:arg[65], String:arg2[6];
+	new String:arg[65], String:arg2[11], String:arg3[11], String:arg4[3];
 	GetCmdArg(1, arg, sizeof(arg));
 	GetCmdArg(2, arg2, sizeof(arg2));
+	GetCmdArg(3, arg3, sizeof(arg3));
+	GetCmdArg(4, arg4, sizeof(arg4));
+	StripQuotes(arg2);
 		
 	new String:target_name[MAX_TARGET_LENGTH];
 	new target_list[MaxClients], target_count, bool:tn_is_ml;
@@ -1984,20 +2209,54 @@ public Action:Command_Heal(client, args)
 		return Plugin_Handled;
 	}
 	
-	new health = StringToInt(arg2);
+	new health = IsStringNumber(arg2) ? StringToInt(arg2) : -1;
 	
 	if(health > 65535)
 		health = 65535;
 		
+	new armor = IsStringNumber(arg3) ? StringToInt(arg3) : -1;
+	
+	if(armor > 255)
+		armor = 255;
+		
+	new helmet = IsStringNumber(arg4) ? StringToInt(arg4) : -1;
+	
+	new String:ActivityBuffer[256];
+	
+	if(helmet > 2) // The helmet will never be a negative.
+		helmet = -1;
+
+	new bool:bHelmet = view_as<bool>(helmet);
 	for(new i=0;i < target_count;i++)
 	{
 		new target = target_list[i];
 		
-		if(StrEqual(arg2, ""))
+		if(StrEqual(arg2, "max"))
 			health = GetEntProp(target, Prop_Data, "m_iMaxHealth");
+		
+		Format(ActivityBuffer, sizeof(ActivityBuffer), "set %N's", target);
+		if(health != -1)
+		{
+			SetEntityHealth(target, health);
+			Format(ActivityBuffer, sizeof(ActivityBuffer), "%s health to %i, ", ActivityBuffer, health);
+		}
+		if(armor != -1)
+		{
+			SetClientArmor(target, armor);
 			
-		SetEntityHealth(target, health);
-		ShowActivity2(client, "[SM] ", "healed %N to %i.", target, health); 
+			Format(ActivityBuffer, sizeof(ActivityBuffer), "%s armor to %i, ", ActivityBuffer, armor);
+		}
+		if(helmet != -1)
+		{
+			SetClientHelmet(target, bHelmet);
+			
+			Format(ActivityBuffer, sizeof(ActivityBuffer), "%s helmet to %i, ", ActivityBuffer, helmet);
+		}
+		
+		new length = strlen(ActivityBuffer);
+		ActivityBuffer[length-2] = '.';
+		ActivityBuffer[length-1] = EOS;
+		ShowActivity2(client, "[SM] ", ActivityBuffer); 
 	}
 	return Plugin_Handled;
 }
@@ -2125,10 +2384,76 @@ public Action:Command_Give(client, args)
 
 public Action:Command_RestartRound(client, args)
 {
-	ServerCommand("mp_restartgame 1");
+	if(hRRTimer != INVALID_HANDLE)
+	{
+		CloseHandle(hRestartTimer);
+		hRestartTimer = INVALID_HANDLE;
+	}
 	
-	PrintToChatAll(" \x01Admin\x03 %N\x01 has\x04 restarted\x01 the round!", client);
+	new Float:SecondsBeforeRestart;
+	new String:Arg[11];
+	if(args > 0)
+	{
+		GetCmdArg(1, Arg, sizeof(Arg));
 	
+		SecondsBeforeRestart = StringToFloat(Arg);
+	}
+	else
+		SecondsBeforeRestart = 1.0;
+		
+	
+	if(SecondsBeforeRestart != 0.0)
+	{
+		new iSecondsBeforeRestart = RoundFloat(SecondsBeforeRestart);
+		
+		new String:strSecondsBeforeRestart[11];
+		IntToString(iSecondsBeforeRestart, strSecondsBeforeRestart, sizeof(strSecondsBeforeRestart));
+		Format(Arg, sizeof(Arg), "second%s", iSecondsBeforeRestart == 1 ? "" : "s");
+		UC_PrintCenterTextAll("#SFUI_Notice_Game_will_restart_in", strSecondsBeforeRestart, Arg);
+		PrintToChatAll(" \x01Admin\x03 %N\x01 will\x04 restart\x01 the round in\x05 %i\x01 %s!", client, iSecondsBeforeRestart, Arg);
+		hRRTimer = CreateTimer(SecondsBeforeRestart, RestartRound, _, TIMER_FLAG_NO_MAPCHANGE);
+	}
+	else
+		PrintToChatAll(" \x01Admin\x03 %N\x01 stopped the\x04 round restart\x01!", client);
+
+	return Plugin_Handled;
+}
+
+public Action:RestartRound(Handle:hTimer)
+{
+	hRRTimer = INVALID_HANDLE;	
+	
+	CS_TerminateRound(0.0, CSRoundEnd_Draw, true);
+}
+
+public Action:Command_RestartGame(client, args)
+{
+	new SecondsBeforeRestart;
+	if(args > 0)
+	{
+		new String:Arg[11];
+		GetCmdArg(1, Arg, sizeof(Arg));
+	
+		SecondsBeforeRestart = StringToInt(Arg);
+	}
+	else
+		SecondsBeforeRestart = 1;
+		
+	ServerCommand("mp_restartgame %i", SecondsBeforeRestart);
+	
+	
+	if(SecondsBeforeRestart != 0)
+		PrintToChatAll(" \x01Admin\x03 %N\x01 will\x04 restart\x01 the game in\x05 %i\x01 second%s!", client, SecondsBeforeRestart, SecondsBeforeRestart == 1 ? "" : "s");
+		
+	else
+	{
+		if(isCSGO())
+		{
+			GameRules_SetProp("m_bGameRestart", 0);
+			GameRules_SetPropFloat("m_flRestartRoundTime", 0.0);
+		}	
+		PrintToChatAll(" \x01Admin\x03 %N\x01 stopped the\x04 game restart\x01!", client);
+	}
 	return Plugin_Handled;
 }
 
@@ -2499,6 +2824,9 @@ public Action:Command_Cheat(client, args)
 */
 public Action:Command_Last(client, args)
 {
+	if(dbLocal == INVALID_HANDLE)
+		return Plugin_Handled;
+		
 	SQL_TQuery(dbLocal, SQLCB_LastConnected, "SELECT * FROM UsefulCommands_LastPlayers ORDER BY LastConnect DESC", GetClientUserId(client)); 
 	
 	return Plugin_Handled;
@@ -2687,7 +3015,7 @@ public Action:Command_UCEdit(client, args)
 		if(UCEdit[client])
 		{
 			SetEntProp(Chicken, Prop_Send, "m_bShouldGlow", true, true);
-			SetEntProp(Chicken, Prop_Send, "m_nGlowStyle", GLOW_WALLHACK);
+			SetEntProp(Chicken, Prop_Send, "m_nGlowStyle", GLOW_FULLBODY);
 			SetEntPropFloat(Chicken, Prop_Send, "m_flGlowMaxDist", 10000.0);
 			SetEntityMoveType(Chicken, MOVETYPE_NONE);
 		}
@@ -2714,7 +3042,9 @@ public Action:Command_UCEdit(client, args)
 
 public Action:Command_Chicken(client, args)
 {
-
+	if(dbLocal == INVALID_HANDLE)
+		return Plugin_Handled;
+		
 	new Handle:hMenu = CreateMenu(ChickenMenu_Handler);
 	
 	AddMenuItem(hMenu, "", "Create Chicken Spawner");	
@@ -3185,7 +3515,13 @@ public Action:Command_SilentCvar(client, args)
 
 	LogAction(client, -1, "\"%L\" changed cvar (cvar \"%s\") (value \"%s\")", client, cvarname, value);
 
+	new flags = hndl.Flags;
+	
+	hndl.Flags = (flags & ~FCVAR_NOTIFY);
+	
 	hndl.SetString(value, true);
+	
+	hndl.Flags = flags;
 
 	return Plugin_Handled;
 }
@@ -3214,6 +3550,156 @@ public Action:Command_CustomAce(client, args)
 	return Plugin_Handled;
 }
 
+public Action:Command_WepStats(client, args)
+{
+	new Handle:hMenu = CreateMenu(WepStatsMenu_Handler);
+	
+	new CSWeaponID:i;
+	new String:WeaponID[20], String:Alias[20];
+	for(i = CSWeapon_NONE;i < CSWeapon_MAX_WEAPONS_NO_KNIFES;i++)
+	{
+		if(!CS_IsValidWeaponID(i))
+			continue;
+			
+		if(!CS_WeaponIDToAlias(i, Alias, sizeof(Alias)))
+			continue;
+		
+		new bool:Ignore = false;
+		for(new a=0;a < sizeof(wepStatsIgnore);a++)
+		{
+			if(i == wepStatsIgnore[a])
+			{
+				a = sizeof(wepStatsIgnore);
+				Ignore = true;
+			}
+		}
+		
+		if(Ignore)
+			continue;
+			
+		IntToString(view_as<int>(i), WeaponID, sizeof(WeaponID));
+		
+		AddMenuItem(hMenu, WeaponID, Alias);	
+	}
+	
+	if(UCEdit[client])
+		AddMenuItem(hMenu, "", "Delete Spawner On Aim");
+	
+	SetMenuTitle(hMenu, "Choose a weapon to get stats about:");
+	DisplayMenu(hMenu, client, MENU_TIME_FOREVER);
+	
+	return Plugin_Handled;
+}
+
+
+public WepStatsMenu_Handler(Handle:hMenu, MenuAction:action, client, item)
+{
+	if(action == MenuAction_End)
+		CloseHandle(hMenu);
+	
+	else if(action == MenuAction_Select)
+	{
+		new CSWeaponID:i, String:WeaponID[20], iIgnore, String:WeaponName[20];
+		
+		GetMenuItem(hMenu, item, WeaponID, sizeof(WeaponID), iIgnore, WeaponName, sizeof(WeaponName));
+		
+		i = view_as<CSWeaponID>(StringToInt(WeaponID));
+		
+		ShowSelectedWepStatMenu(client, i);
+	}
+}
+
+ShowSelectedWepStatMenu(client, CSWeaponID:i)
+{
+	new Handle:hMenu = CreateMenu(WepStatsSelectedMenu_Handler);
+		
+	new String:TempFormat[150];
+	
+	new String:WeaponID[20];
+	
+	IntToString(view_as<int>(i), WeaponID, sizeof(WeaponID));
+	
+	Format(TempFormat, sizeof(TempFormat), "Base Damage: %i per shot", wepStatsList[i][wepStatsDamage]);
+	AddMenuItem(hMenu, WeaponID, TempFormat);
+	
+	Format(TempFormat, sizeof(TempFormat), "Rate of Fire: %i RPM", wepStatsList[i][wepStatsFireRate]);
+	AddMenuItem(hMenu, "", TempFormat);
+	
+	Format(TempFormat, sizeof(TempFormat), "Armor Penetration: %.1f%%", wepStatsList[i][wepStatsArmorPenetration]);
+	AddMenuItem(hMenu, "", TempFormat);
+	
+	Format(TempFormat, sizeof(TempFormat), "Kill Award: %i$", wepStatsList[i][wepStatsKillAward]);
+	AddMenuItem(hMenu, "", TempFormat);
+	
+	Format(TempFormat, sizeof(TempFormat), "Surface Penetration: %.2f*\n Note: To compare, AWP has %.2f ", wepStatsList[i][wepStatsWallPenetration], wepStatsList[CSWeapon_AWP][wepStatsWallPenetration]);
+	AddMenuItem(hMenu, "", TempFormat);
+	
+	Format(TempFormat, sizeof(TempFormat), "Damage Dropoff: %i%% per 500 units", wepStatsList[i][wepStatsDamageDropoff]);
+	AddMenuItem(hMenu, "", TempFormat);
+	
+	Format(TempFormat, sizeof(TempFormat), "Max Damage Range: %i units", wepStatsList[i][wepStatsMaxDamageRange]);
+	AddMenuItem(hMenu, "", TempFormat);
+	
+	Format(TempFormat, sizeof(TempFormat), "Pallets Per Shot: %i", wepStatsList[i][wepStatsPalletsPerShot]);
+	AddMenuItem(hMenu, "", TempFormat);
+	
+	Format(TempFormat, sizeof(TempFormat), "Fully Automatic: %s", wepStatsList[i][wepStatsIsAutomatic] ? "Yes" : "No");
+	AddMenuItem(hMenu, "", TempFormat);
+	
+	if(wepStatsList[i][wepStatsTapDistanceNoArmor] == 0)
+	{
+		Format(TempFormat, sizeof(TempFormat), "Max 1 Tap Range Unarmored*: Impossible");
+		AddMenuItem(hMenu, "", TempFormat);
+	}
+	else
+	{
+		Format(TempFormat, sizeof(TempFormat), "Max 1 Tap Range Unarmored*: %i", wepStatsList[i][wepStatsTapDistanceNoArmor]);
+		AddMenuItem(hMenu, "", TempFormat);
+	}
+	
+	if(wepStatsList[i][wepStatsTapDistanceArmor] == 0)
+	{
+		Format(TempFormat, sizeof(TempFormat), "Max 1 Tap Range Armored*: Impossible\n * Note: If a shotgun, that's assumming all pallets hit the head");
+		AddMenuItem(hMenu, "", TempFormat);
+	}
+	else
+	{
+		Format(TempFormat, sizeof(TempFormat), "Max 1 Tap Range Armored*: %i\n * Note: If a shotgun, that's assumming all pallets hit the head", wepStatsList[i][wepStatsTapDistanceArmor]);
+		AddMenuItem(hMenu, "", TempFormat);
+	}
+	
+	
+	
+	SetMenuExitBackButton(hMenu, true);
+	SetMenuExitButton(hMenu, true);
+	
+	CS_WeaponIDToAlias(i, WeaponID, sizeof(WeaponID)); // We already did everything needed for WeaponID, allowed to re-use it.
+	
+	SetMenuTitle(hMenu, WeaponID);
+	
+	DisplayMenu(hMenu, client, 30);
+}
+
+public WepStatsSelectedMenu_Handler(Handle:hMenu, MenuAction:action, client, item)
+{
+	if(action == MenuAction_End)
+		CloseHandle(hMenu);
+	
+	else if(item == MenuCancel_ExitBack)
+	{
+		Command_WepStats(client, 0);
+	}
+	else if(action == MenuAction_Select)
+	{
+		new CSWeaponID:i, String:WeaponID[20], iIgnore, String:WeaponName[20];
+		
+		GetMenuItem(hMenu, 0, WeaponID, sizeof(WeaponID), iIgnore, WeaponName, sizeof(WeaponName));
+		
+		i = view_as<CSWeaponID>(StringToInt(WeaponID));
+		
+		ShowSelectedWepStatMenu(client, i);
+	}
+}
 stock UC_StripPlayerWeapons(client)
 {
 	if(!IsValidPlayer(client))
@@ -3402,7 +3888,7 @@ stock UC_CreateGlow(client, Color[3])
 		// Give glowing effect to the entity
 		
 		SetEntProp(GlowEnt, Prop_Send, "m_bShouldGlow", true, true);
-		SetEntProp(GlowEnt, Prop_Send, "m_nGlowStyle", GLOW_FULLBODY);
+		SetEntProp(GlowEnt, Prop_Send, "m_nGlowStyle", GLOW_WALLHACK);
 		SetEntPropFloat(GlowEnt, Prop_Send, "m_flGlowMaxDist", 10000.0);
 		
 		// Set glowing color
@@ -4053,3 +4539,78 @@ stock bool:UC_IsNullVector(const Float:Vector[3])
 {
 	return (Vector[0] == NULL_VECTOR[0] && Vector[0] == NULL_VECTOR[1] && Vector[2] == NULL_VECTOR[2]);
 }
+
+// https://github.com/Drixevel/Sourcemod-Resources/blob/master/sourcemod-misc.inc
+
+stock bool:IsStringNumber(const String:str[])
+{
+	new x = 0;
+	new bool:numbersFound;
+
+	//if (str[x] == '+' || str[x] == '-')
+		//x++;
+
+	while (str[x] != '\0')
+	{
+		if(IsCharNumeric(str[x]))
+		{
+			numbersFound = true;
+		}
+		else
+			return false;
+
+		x++;
+	}
+
+	return numbersFound;
+}
+
+stock SetClientArmor(client, amount)
+{		
+	SetEntProp(client, Prop_Send, "m_ArmorValue", amount);
+}
+
+stock SetClientHelmet(client, bool:helmet)
+{
+	SetEntProp(client, Prop_Send, "m_bHasHelmet", helmet);
+}
+
+// https://forums.alliedmods.net/showpost.php?p=2325048&postcount=8
+// Print a Valve translation phrase to a group of players 
+// Adapted from util.h's UTIL_PrintToClientFilter 
+stock UC_PrintCenterTextAll(const String:msg_name[], const String:param1[]="", const String:param2[]="", const String:param3[]="", const String:param4[]="")
+{ 
+	new clients[MAXPLAYERS+1], numClients;
+	
+	for(new i=1;i <= MaxClients;i++)
+	{
+		if(!IsClientInGame(i))
+			continue;
+			
+		clients[numClients++] = i;
+	}
+	new Handle:bf = StartMessage("TextMsg", clients, numClients, USERMSG_RELIABLE); 
+     
+	if (GetUserMessageType() == UM_Protobuf) 
+	{ 
+		PbSetInt(bf, "msg_dst", HUD_PRINTCENTER); 
+		PbAddString(bf, "params", msg_name); 
+			
+		PbAddString(bf, "params", param1); 
+		PbAddString(bf, "params", param2); 
+		PbAddString(bf, "params", param3); 
+		PbAddString(bf, "params", param4); 
+	} 
+	else 
+	{ 
+		BfWriteByte(bf, HUD_PRINTCENTER); 
+		BfWriteString(bf, msg_name); 
+		
+		BfWriteString(bf, param1); 
+		BfWriteString(bf, param2); 
+		BfWriteString(bf, param3); 
+		BfWriteString(bf, param4); 
+	}
+     
+	EndMessage(); 
+}  
