@@ -449,6 +449,9 @@ public OnAllPluginsLoaded()
 		
 		if(!CommandExists("sm_wepstats"))
 			RegConsoleCmd("sm_wepstats", Command_WepStats, "Shows the stats of all weapons");
+			
+		if(!CommandExists("sm_weaponstats"))
+			RegConsoleCmd("sm_weaponstats", Command_WepStats, "Shows the stats of all weapons");
 	}	
 		
 	HookEvent("player_spawn", Event_PlayerSpawn, EventHookMode_Post);
