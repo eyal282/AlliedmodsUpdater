@@ -338,7 +338,7 @@ public OnAllPluginsLoaded()
 	hcv_TagScale = CreateConVar("uc_bullet_tagging_scale", "1.0", "5000000.0 is more than enough to disable tagging completely. Below 1.0 makes tagging stronger. 1.0 for default game behaviour", FCVAR_NOTIFY, true, 0.0);
 	hcv_ucSpecialC4Rules = CreateConVar("uc_special_bomb_rules", "0", "If 1, CT can pick-up C4 but can't abuse it in any way ( e.g dropping it in unreachable spots ) and can't get rid of it unless to another player.", FCVAR_NOTIFY);
 	hcv_ucAcePriority = CreateConVar("uc_ace_priority", "2", "Prioritize Ace over all other fun facts of a round's end and print a message when a player makes an ace. Set to 2 if you want players to have a custom fun fact on ace.");
-	hcv_ucAnnouncePlugin = CreateConVar("uc_announce_plugin", "36.5", "Announces to joining players that the best utility plugin is running, this cvar's value when after a player joins he'll get the message.");
+	hcv_ucAnnouncePlugin = CreateConVar("uc_announce_plugin", "36.5", "Announces to joining players that the best utility plugin is running, this cvar's value when after a player joins he'll get the message. 0 to disable.");
 	hcv_ucReviveOnTeamChange = CreateConVar("uc_revive_on_team_change", "1", "Revive the player when an admin sets his team.");
 	
 	if(!CommandExists("sm_revive"))
