@@ -3152,8 +3152,15 @@ public Action:Command_Team(client, args)
 	
 	new TeamToSet;
 	if(UC_IsStringNumber(arg2))
+	{
 		TeamToSet = StringToInt(arg2);
 		
+		if(TeamToSet > CS_TEAM_CT || TeamToSet < CS_TEAM_SPECTATOR)
+		{
+			ReplyToCommand(client, "[SM] Usage: sm_team <#userid|name> <CT/T/Spec>");
+			return Plugin_Handled;
+		}
+	}	
 	else
 	{
 		if(StrEqual(arg2, "CT", false))
