@@ -2,11 +2,11 @@
 {
 	"Version"
 	{
-		"Latest"	"2.7"
+		"Latest"	"2.8"
 	}
 	
-	"Notes"	"Useful Commands is now updated to version 2.7"
-	"Notes"	"Check https://forums.alliedmods.net/showthread.php?p=2617618#post2617618 for more info."
+	"Notes"	"Useful Commands is now updated to version 2.8"
+	"Notes"	"Check https://forums.alliedmods.net/showthread.php?p=2617618 for more info."
 }
 	
 "Files"
