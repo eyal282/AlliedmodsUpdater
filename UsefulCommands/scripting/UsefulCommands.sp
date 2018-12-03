@@ -6,6 +6,9 @@
 #include <cstrike>
 #include <clientprefs>
 
+#define MAX_POSSIBLE_HP 65535
+#define MAX_POSSIBLE_MONEY 65535
+
 #define HEADSHOT_MULTIPLIER 4.0
 #define STOMACHE_MULTIPLIER 1.25
 #define CHEST_MULTIPLIER 1.0
@@ -19,7 +22,7 @@
 
 //#define TEST
 
-new const String:PLUGIN_VERSION[] = "2.7";
+new const String:PLUGIN_VERSION[] = "2.8";
 
 public Plugin:myinfo = 
 {
@@ -106,6 +109,8 @@ new Float:DeathOrigin[MAXPLAYERS+1][3];
 
 new bool:UberSlapped[MAXPLAYERS+1], TotalSlaps[MAXPLAYERS+1];
 
+new Handle:Trie_UCCommands = INVALID_HANDLE;
+
 new Handle:hcv_PartyMode = INVALID_HANDLE;
 new Handle:hcv_mpAnyoneCanPickupC4 = INVALID_HANDLE;
 //new Handle:hcv_svCheats = INVALID_HANDLE;
@@ -120,6 +125,9 @@ new Handle:hcv_ucMinChickenTime = INVALID_HANDLE;
 new Handle:hcv_ucMaxChickenTime = INVALID_HANDLE;
 new Handle:hcv_ucPartyMode = INVALID_HANDLE;
 new Handle:hcv_ucPartyModeDefault = INVALID_HANDLE;
+new Handle:hcv_ucAnnouncePlugin = INVALID_HANDLE;
+new Handle:hcv_ucReviveOnTeamChange = INVALID_HANDLE;
+
 new Handle:hCookie_EnablePM = INVALID_HANDLE;
 new Handle:hCookie_AceFunFact = INVALID_HANDLE;
 
@@ -128,6 +136,7 @@ new Handle:TIMER_STUCK[MAXPLAYERS+1] = INVALID_HANDLE;
 new Handle:TIMER_LIFTOFF[MAXPLAYERS+1] = INVALID_HANDLE;
 new Handle:TIMER_ROCKETCHECK[MAXPLAYERS+1] = INVALID_HANDLE;
 new Handle:TIMER_LASTC4[MAXPLAYERS+1] = INVALID_HANDLE;
+new Handle:TIMER_ANNOUNCEPLUGIN[MAXPLAYERS+1] = INVALID_HANDLE;
 
 new AceCandidate[7]; // IDK How many teams there are...
 
@@ -232,6 +241,8 @@ public APLRes:AskPluginLoad2(Handle:myself, bool:bLate, String:error[], length)
 }
 public OnPluginStart()
 {
+	Trie_UCCommands = CreateTrie();
+	
 	GameName = GetEngineVersion();
 	
 	//hcv_svCheats = FindConVar("sv_cheats");
@@ -327,98 +338,108 @@ public OnAllPluginsLoaded()
 	hcv_TagScale = CreateConVar("uc_bullet_tagging_scale", "1.0", "5000000.0 is more than enough to disable tagging completely. Below 1.0 makes tagging stronger. 1.0 for default game behaviour", FCVAR_NOTIFY, true, 0.0);
 	hcv_ucSpecialC4Rules = CreateConVar("uc_special_bomb_rules", "0", "If 1, CT can pick-up C4 but can't abuse it in any way ( e.g dropping it in unreachable spots ) and can't get rid of it unless to another player.", FCVAR_NOTIFY);
 	hcv_ucAcePriority = CreateConVar("uc_ace_priority", "2", "Prioritize Ace over all other fun facts of a round's end and print a message when a player makes an ace. Set to 2 if you want players to have a custom fun fact on ace.");
+	hcv_ucAnnouncePlugin = CreateConVar("uc_announce_plugin", "36.5", "Announces to joining players that the best utility plugin is running, this cvar's value when after a player joins he'll get the message.");
+	hcv_ucReviveOnTeamChange = CreateConVar("uc_revive_on_team_change", "1", "Revive the player when an admin sets his team.");
 	
 	if(!CommandExists("sm_revive"))
-		RegAdminCmd("sm_revive", Command_Revive, ADMFLAG_BAN, "Respawns a player from the dead");
-		
+		UC_RegAdminCmd("sm_revive", Command_Revive, ADMFLAG_BAN, "Respawns a player from the dead");
+
 	if(!CommandExists("sm_1up"))
-		RegAdminCmd("sm_1up", Command_HardRevive, ADMFLAG_BAN, "Respawns a player from the dead back to his death position");
+		UC_RegAdminCmd("sm_1up", Command_HardRevive, ADMFLAG_BAN, "Respawns a player from the dead back to his death position");
 		
 	if(!CommandExists("sm_hrevive"))
-		RegAdminCmd("sm_hrevive", Command_HardRevive, ADMFLAG_BAN, "Respawns a player from the dead back to his death position");
+		UC_RegAdminCmd("sm_hrevive", Command_HardRevive, ADMFLAG_BAN, "Respawns a player from the dead back to his death position");
 		
 	if(!CommandExists("sm_bury"))
-		RegAdminCmd("sm_bury", Command_Bury, ADMFLAG_BAN, "Buries a player underground");	
+		UC_RegAdminCmd("sm_bury", Command_Bury, ADMFLAG_BAN, "Buries a player underground");	
 		
 	if(!CommandExists("sm_unbury"))
-		RegAdminCmd("sm_unbury", Command_Unbury, ADMFLAG_BAN, "unburies a player from the ground");	
+		UC_RegAdminCmd("sm_unbury", Command_Unbury, ADMFLAG_BAN, "unburies a player from the ground");	
 		
 	if(!CommandExists("sm_uberslap"))
-		RegAdminCmd("sm_uberslap", Command_UberSlap, ADMFLAG_BAN, "Slaps a player 100 times, leaving him with 1 hp");	
+		UC_RegAdminCmd("sm_uberslap", Command_UberSlap, ADMFLAG_BAN, "Slaps a player 100 times, leaving him with 1 hp");	
 	
 	if(!CommandExists("sm_heal"))
-		RegAdminCmd("sm_heal", Command_Heal, ADMFLAG_BAN, "Allows to either heal a player, give him armor or a helmet.");
+		UC_RegAdminCmd("sm_heal", Command_Heal, ADMFLAG_BAN, "Allows to either heal a player, give him armor or a helmet.");
 		
 	if(!CommandExists("sm_give"))
-		RegAdminCmd("sm_give", Command_Give, ADMFLAG_CHEATS, "Give a weapon for a player.");
+		UC_RegAdminCmd("sm_give", Command_Give, ADMFLAG_CHEATS, "Give a weapon for a player.");
 		
 	if(!CommandExists("sm_rr"))
-		RegAdminCmd("sm_rr", Command_RestartRound, ADMFLAG_CHANGEMAP, "Restarts the round.");
+		UC_RegAdminCmd("sm_rr", Command_RestartRound, ADMFLAG_CHANGEMAP, "Restarts the round.");
 		
 	if(!CommandExists("sm_restartround"))
-		RegAdminCmd("sm_restartround", Command_RestartRound, ADMFLAG_CHANGEMAP, "Restarts the round.");
+		UC_RegAdminCmd("sm_restartround", Command_RestartRound, ADMFLAG_CHANGEMAP, "Restarts the round.");
 		
 	if(!CommandExists("sm_rg"))
-		RegAdminCmd("sm_rg", Command_RestartGame, ADMFLAG_CHANGEMAP, "Restarts the game.");
+		UC_RegAdminCmd("sm_rg", Command_RestartGame, ADMFLAG_CHANGEMAP, "Restarts the game.");
 		
 	if(!CommandExists("sm_restartgame"))
-		RegAdminCmd("sm_restartgame", Command_RestartGame, ADMFLAG_CHANGEMAP, "Restarts the game.");
+		UC_RegAdminCmd("sm_restartgame", Command_RestartGame, ADMFLAG_CHANGEMAP, "Restarts the game.");
 		
 	if(!CommandExists("sm_restart"))
-		RegAdminCmd("sm_restart", Command_RestartServer, ADMFLAG_CHANGEMAP, "Restarts the server after 5 seconds. Type again to abort restart.");
+		UC_RegAdminCmd("sm_restart", Command_RestartServer, ADMFLAG_CHANGEMAP, "Restarts the server after 5 seconds. Type again to abort restart.");
 		
 	if(!CommandExists("sm_restartserver"))
-		RegAdminCmd("sm_restartserver", Command_RestartServer, ADMFLAG_CHANGEMAP, "Restarts the server after 5 seconds. Type again to abort restart.");
+		UC_RegAdminCmd("sm_restartserver", Command_RestartServer, ADMFLAG_CHANGEMAP, "Restarts the server after 5 seconds. Type again to abort restart.");
 		
 	if(!CommandExists("sm_glow"))
-		RegAdminCmd("sm_glow", Command_Glow, ADMFLAG_BAN, "Puts glow on a player for all to see.");
+		UC_RegAdminCmd("sm_glow", Command_Glow, ADMFLAG_BAN, "Puts glow on a player for all to see.");
 		
 	if(!CommandExists("sm_blink"))
-		RegAdminCmd("sm_blink", Command_Blink, ADMFLAG_BAN, "Teleports the player to where you are aiming");
+		UC_RegAdminCmd("sm_blink", Command_Blink, ADMFLAG_BAN, "Teleports the player to where you are aiming");
 		
 	if(!CommandExists("sm_godmode"))
-		RegAdminCmd("sm_godmode", Command_Godmode, ADMFLAG_BAN, "Makes player immune to damage, not necessarily to death.");
+		UC_RegAdminCmd("sm_godmode", Command_Godmode, ADMFLAG_BAN, "Makes player immune to damage, not necessarily to death.");
 		
 	if(!CommandExists("sm_god"))
-		RegAdminCmd("sm_god", Command_Godmode, ADMFLAG_BAN, "Makes player immune to damage, not necessarily to death.");
+		UC_RegAdminCmd("sm_god", Command_Godmode, ADMFLAG_BAN, "Makes player immune to damage, not necessarily to death.");
 		
 	if(!CommandExists("sm_rocket"))
-		RegAdminCmd("sm_rocket", Command_Rocket, ADMFLAG_BAN, "The more handsome sm_slay command");
+		UC_RegAdminCmd("sm_rocket", Command_Rocket, ADMFLAG_BAN, "The more handsome sm_slay command");
 		
 	if(!CommandExists("sm_disarm"))
-		RegAdminCmd("sm_disarm", Command_Disarm, ADMFLAG_BAN, "strips all of the player's weapons");	
+		UC_RegAdminCmd("sm_disarm", Command_Disarm, ADMFLAG_BAN, "strips all of the player's weapons");	
 		
 	//if(!CommandExists("sm_cheat"))
-		//RegAdminCmd("sm_cheat", Command_Cheat, ADMFLAG_CHEATS, "Writes a command bypassing its cheat flag.");	
+		//UC_RegAdminCmd("sm_cheat", Command_Cheat, ADMFLAG_CHEATS, "Writes a command bypassing its cheat flag.");	
 		
 	if(!CommandExists("sm_last"))
-		RegAdminCmd("sm_last", Command_Last, ADMFLAG_BAN, "Shows a full list of every single player that ever visited");
+		UC_RegAdminCmd("sm_last", Command_Last, ADMFLAG_BAN, "Shows a full list of every single player that ever visited");
 		
 	if(!CommandExists("sm_exec"))
-		RegAdminCmd("sm_exec", Command_Exec, ADMFLAG_BAN, "Makes a player execute a command. Use !fakeexec if doesn't work.");
+		UC_RegAdminCmd("sm_exec", Command_Exec, ADMFLAG_BAN, "Makes a player execute a command. Use !fakeexec if doesn't work.");
 		
 	if(!CommandExists("sm_fakeexec"))
-		RegAdminCmd("sm_fakeexec", Command_FakeExec, ADMFLAG_BAN, "Makes a player execute a command. Use !exec if doesn't work.");
+		UC_RegAdminCmd("sm_fakeexec", Command_FakeExec, ADMFLAG_BAN, "Makes a player execute a command. Use !exec if doesn't work.");
 	
 	if(!CommandExists("sm_brutexec"))
-		RegAdminCmd("sm_brutexec", Command_BruteExec, ADMFLAG_BAN, "Makes a player execute a command with !fakeexec but letting him have admin flags to accomplish the action. Use !exec if doesn't work.");
+		UC_RegAdminCmd("sm_brutexec", Command_BruteExec, ADMFLAG_BAN, "Makes a player execute a command with !fakeexec but letting him have admin flags to accomplish the action. Use !exec if doesn't work.");
 		
 	if(!CommandExists("sm_bruteexec"))
-		RegAdminCmd("sm_bruteexec", Command_BruteExec, ADMFLAG_BAN, "Makes a player execute a command with !fakeexec but letting him have admin flags to accomplish the action. Use !exec if doesn't work.");
+		UC_RegAdminCmd("sm_bruteexec", Command_BruteExec, ADMFLAG_BAN, "Makes a player execute a command with !fakeexec but letting him have admin flags to accomplish the action. Use !exec if doesn't work.");
+		
+	if(!CommandExists("sm_money"))
+		UC_RegAdminCmd("sm_money", Command_Money, ADMFLAG_GENERIC, "Sets a player's money.");
+		
+	if(!CommandExists("sm_team"))
+		UC_RegAdminCmd("sm_team", Command_Team, ADMFLAG_GENERIC, "Sets a player's team.");
 		
 	if(!CommandExists("sm_xyz"))
-		RegAdminCmd("sm_xyz", Command_XYZ, ADMFLAG_GENERIC, "Prints your origin.");	
+		UC_RegAdminCmd("sm_xyz", Command_XYZ, ADMFLAG_GENERIC, "Prints your origin.");	
 		
 	if(!CommandExists("sm_silentcvar"))
-		RegAdminCmd("sm_silentcvar", Command_SilentCvar, ADMFLAG_ROOT, "Changes cvar without in-game notification."); // I cannot afford to allow less than Root as I cannot monitor protected cvars. Changing access flag means the admin can get rcon_password.
+		UC_RegAdminCmd("sm_silentcvar", Command_SilentCvar, ADMFLAG_ROOT, "Changes cvar without in-game notification."); // I cannot afford to allow less than Root as I cannot monitor protected cvars. Changing access flag means the admin can get rcon_password.
 		
 	if(!CommandExists("sm_hug"))
-		RegConsoleCmd("sm_hug", Command_Hug, "Hugs a dead player.");
-		
+		UC_RegConsoleCmd("sm_hug", Command_Hug, "Hugs a dead player.");
+	
+	UC_RegConsoleCmd("sm_uc", Command_UC, "Shows a list of UC commands.");
+	
 	if(isCSGO())
 	{
 		if(!CommandExists("sm_customace"))
-			RegConsoleCmd("sm_customace", Command_CustomAce, "Allows you to set a custom fun fact for ace.");
+			UC_RegConsoleCmd("sm_customace", Command_CustomAce, "Allows you to set a custom fun fact for ace.");
 			
 		hcv_PartyMode = FindConVar("sv_party_mode");
 		
@@ -440,18 +461,18 @@ public OnAllPluginsLoaded()
 			
 		if(!CommandExists("sm_chicken"))
 		{
-			RegAdminCmd("sm_chicken", Command_Chicken, ADMFLAG_BAN, "Allows you to set up the map's chicken spawns.");	
-			RegAdminCmd("sm_ucedit", Command_UCEdit, ADMFLAG_BAN, "Allows you to teleport to the chicken spawner prior to delete.");
+			UC_RegAdminCmd("sm_chicken", Command_Chicken, ADMFLAG_BAN, "Allows you to set up the map's chicken spawns.");	
+			UC_RegAdminCmd("sm_ucedit", Command_UCEdit, ADMFLAG_BAN, "Allows you to teleport to the chicken spawner prior to delete.");
 			hcv_ucMaxChickens = CreateConVar("uc_max_chickens", "5", "Maximum amount of chickens UC will generate.");
 			hcv_ucMinChickenTime = CreateConVar("uc_min_chicken_time", "5.0", "Minimum amount of time between a chicken's death and the recreation.");
 			hcv_ucMaxChickenTime = CreateConVar("uc_max_chicken_time", "10.0", "Maximum amount of time between a chicken's death and the recreation.");
 		}
 		
 		if(!CommandExists("sm_wepstats"))
-			RegConsoleCmd("sm_wepstats", Command_WepStats, "Shows the stats of all weapons");
+			UC_RegConsoleCmd("sm_wepstats", Command_WepStats, "Shows the stats of all weapons");
 			
 		if(!CommandExists("sm_weaponstats"))
-			RegConsoleCmd("sm_weaponstats", Command_WepStats, "Shows the stats of all weapons");
+			UC_RegConsoleCmd("sm_weaponstats", Command_WepStats, "Shows the stats of all weapons");
 	}	
 		
 	HookEvent("player_spawn", Event_PlayerSpawn, EventHookMode_Post);
@@ -1286,8 +1307,6 @@ public PartyModeMenu_Handler(Handle:hMenu, MenuAction:action, client, item)
 			else if(GetClientPartyMode(client) == PARTYMODE_ZEUS)
 				SetClientPartyMode(client, PARTYMODE_DEFUSE|PARTYMODE_ZEUS);
 		}
-	
-		CloseHandle(hMenu);
 		
 		ShowPartyModeMenu(client);
 	}
@@ -1554,10 +1573,33 @@ public OnClientPutInServer(client)
 	UCEdit[client] = false;
 	FullInGame[client] = true;
 	
+	if(TIMER_ANNOUNCEPLUGIN[client] != INVALID_HANDLE)
+	{
+		CloseHandle(TIMER_ANNOUNCEPLUGIN[client]);
+		TIMER_ANNOUNCEPLUGIN[client] = INVALID_HANDLE;
+	}
 	
+	new Float:AnnounceTimer = GetConVarFloat(hcv_ucAnnouncePlugin);
+	
+	if(AnnounceTimer != 0.0)
+		TIMER_ANNOUNCEPLUGIN[client] = CreateTimer(AnnounceTimer, Timer_AnnounceUCPlugin, GetClientUserId(client), TIMER_FLAG_NO_MAPCHANGE);
+		
 	SDKHook(client, SDKHook_WeaponDropPost, Event_WeaponDropPost);
 	SDKHook(client, SDKHook_WeaponEquipPost, Event_WeaponPickupPost);
 	SDKHook(client, SDKHook_OnTakeDamagePost, Event_OnTakeDamagePost);
+}
+
+
+public Action:Timer_AnnounceUCPlugin(Handle:hTimer, UserId)
+{
+	new client = GetClientOfUserId(UserId);
+	
+	if(client == 0)
+		return Plugin_Continue;
+
+	PrintToChat(client, " \x01This server is running\x05 Useful Commands\x01 by\x04 Eyal282\x01!");
+	PrintToChat(client, " \x01Type\x05 !uc\x01 for the list of\x05 Useful Commands\x01.");
+	return Plugin_Continue;
 }
 
 public Event_WeaponPickupPost(client, weapon)
@@ -1686,10 +1728,39 @@ public OnClientDisconnect(client)
 	if(candidateCT == client)
 		AceCandidate[CS_TEAM_CT] = -2; // Forbid possibility of Ace for the leaver's team.
 		
+	if(TIMER_UBERSLAP[client] != INVALID_HANDLE)
+	{
+		CloseHandle(TIMER_UBERSLAP[client]);
+		TIMER_UBERSLAP[client] = INVALID_HANDLE;
+	}
+	if(TIMER_STUCK[client] != INVALID_HANDLE)
+	{
+		CloseHandle(TIMER_STUCK[client]);
+		TIMER_STUCK[client] = INVALID_HANDLE;
+	}
+	if(TIMER_LIFTOFF[client] != INVALID_HANDLE)
+	{
+		CloseHandle(TIMER_LIFTOFF[client]);
+		TIMER_LIFTOFF[client] = INVALID_HANDLE;
+	}
+	if(TIMER_ROCKETCHECK[client] != INVALID_HANDLE)
+	{
+		CloseHandle(TIMER_ROCKETCHECK[client]);
+		TIMER_ROCKETCHECK[client] = INVALID_HANDLE;
+	}
+	if(TIMER_LASTC4[client] != INVALID_HANDLE)
+	{
+		CloseHandle(TIMER_LASTC4[client]);
+		TIMER_LASTC4[client] = INVALID_HANDLE;
+	}	
+	if(TIMER_ANNOUNCEPLUGIN[client] != INVALID_HANDLE)
+	{
+		CloseHandle(TIMER_ANNOUNCEPLUGIN[client]);
+		TIMER_ANNOUNCEPLUGIN[client] = INVALID_HANDLE;
+	}
 	new String:AuthId[32];
 	if(GetClientAuthId(client, AuthId_Engine, AuthId, sizeof(AuthId)))
 	{
-        
 		new String:sQuery[256];
 		
 		new String:Name[32], String:IPAddress[32], CurrentTime = GetTime();
@@ -1840,6 +1911,8 @@ public OnMapStart()
 		TIMER_STUCK[i] = INVALID_HANDLE;
 		TIMER_LIFTOFF[i] = INVALID_HANDLE;
 		TIMER_ROCKETCHECK[i] = INVALID_HANDLE;
+		TIMER_LASTC4[i] = INVALID_HANDLE;
+		TIMER_ANNOUNCEPLUGIN[i] = INVALID_HANDLE;
 	}
 	
 	hRestartTimer = INVALID_HANDLE;
@@ -2151,11 +2224,8 @@ public Action:Timer_UberSlap(Handle:hTimer, UserId)
 	new client = GetClientOfUserId(UserId);
 	
 	if(client == 0)
-	{
-		TIMER_UBERSLAP[client] = INVALID_HANDLE;
-		UberSlapped[client] = false;
 		return Plugin_Stop;
-	}
+
 	else if(!UberSlapped[client])
 	{
 		TIMER_UBERSLAP[client] = INVALID_HANDLE;
@@ -2212,17 +2282,17 @@ public Action:Command_Heal(client, args)
 		return Plugin_Handled;
 	}
 	
-	new health = IsStringNumber(arg2) ? StringToInt(arg2) : -1;
+	new health = UC_IsStringNumber(arg2) ? StringToInt(arg2) : -1;
 	
-	if(health > 65535)
-		health = 65535;
+	if(health > MAX_POSSIBLE_HP)
+		health = MAX_POSSIBLE_HP;
 		
-	new armor = IsStringNumber(arg3) ? StringToInt(arg3) : -1;
+	new armor = UC_IsStringNumber(arg3) ? StringToInt(arg3) : -1;
 	
 	if(armor > 255)
 		armor = 255;
 		
-	new helmet = IsStringNumber(arg4) ? StringToInt(arg4) : -1;
+	new helmet = UC_IsStringNumber(arg4) ? StringToInt(arg4) : -1;
 	
 	new String:ActivityBuffer[256];
 	
@@ -2417,8 +2487,14 @@ public Action:Command_RestartRound(client, args)
 		hRRTimer = CreateTimer(SecondsBeforeRestart, RestartRound, _, TIMER_FLAG_NO_MAPCHANGE);
 	}
 	else
+	{
+		if(hRRTimer != INVALID_HANDLE)
+		{
+			CloseHandle(hRRTimer);
+			hRRTimer = INVALID_HANDLE;
+		}
 		PrintToChatAll(" \x01Admin\x03 %N\x01 stopped the\x04 round restart\x01!", client);
-
+	}
 	return Plugin_Handled;
 }
 
@@ -2988,6 +3064,144 @@ public Action:Command_BruteExec(client, args)
 		SetUserFlagBits(target, bitsToGive);
 		FakeClientCommand(target, ExecCommand);
 		SetUserFlagBits(target, bits);
+	}
+	
+	return Plugin_Handled;
+}
+
+
+public Action:Command_Money(client, args)
+{
+	if (args < 2)
+	{
+		ReplyToCommand(client, "[SM] Usage: sm_money <#userid|name> <amount>");
+		return Plugin_Handled;
+	}
+
+	new String:arg[65], String:arg2[11];
+	GetCmdArg(1, arg, sizeof(arg));
+	GetCmdArg(2, arg2, sizeof(arg2));
+	
+	new String:target_name[MAX_TARGET_LENGTH];
+	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	
+	target_count = ProcessTargetString(
+					arg,
+					client,
+					target_list,
+					MaxClients,
+					0,
+					target_name,
+					sizeof(target_name),
+					tn_is_ml);
+
+	if(target_count <= COMMAND_TARGET_NONE) 	// If we don't have dead players
+	{
+		ReplyToTargetError(client, target_count);
+		return Plugin_Handled;
+	}
+	
+	new money = StringToInt(arg2);
+	
+	if(money > MAX_POSSIBLE_MONEY)
+		money = MAX_POSSIBLE_MONEY;
+	
+	for(new i=0;i < target_count;i++)
+	{
+		new target = target_list[i];
+		
+		ShowActivity2(client, "[SM] ", "Set \"%N\"s money to %i.", target, money); 
+		
+		SetEntProp(target, Prop_Send, "m_iAccount", money);
+	}
+	
+	return Plugin_Handled;
+}
+
+
+public Action:Command_Team(client, args)
+{
+	if (args < 2)
+	{
+		ReplyToCommand(client, "[SM] Usage: sm_team <#userid|name> <CT/T/Spec>");
+		return Plugin_Handled;
+	}
+
+	new String:arg[65], String:arg2[11];
+	GetCmdArg(1, arg, sizeof(arg));
+	GetCmdArg(2, arg2, sizeof(arg2));
+	
+	new String:target_name[MAX_TARGET_LENGTH];
+	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	
+	target_count = ProcessTargetString(
+					arg,
+					client,
+					target_list,
+					MaxClients,
+					0,
+					target_name,
+					sizeof(target_name),
+					tn_is_ml);
+
+	if(target_count <= COMMAND_TARGET_NONE) 	// If we don't have dead players
+	{
+		ReplyToTargetError(client, target_count);
+		return Plugin_Handled;
+	}
+	
+	new TeamToSet;
+	if(UC_IsStringNumber(arg2))
+		TeamToSet = StringToInt(arg2);
+		
+	else
+	{
+		if(StrEqual(arg2, "CT", false))
+			TeamToSet = CS_TEAM_CT;
+			
+		else if(StrEqual(arg2, "T", false) || StrEqual(arg2, "Terrorist", false)) // Terrorists included.
+			TeamToSet = CS_TEAM_T;
+			
+		else if(StrEqual(arg2, "Spec", false) || StrEqual(arg2, "Spectator", false))
+			TeamToSet = CS_TEAM_SPECTATOR;
+			
+		else
+		{
+			ReplyToCommand(client, "[SM] Usage: sm_team <#userid|name> <CT/T/Spec>");
+			return Plugin_Handled;
+		}
+	}
+	
+	new String:TeamName[15];
+	
+	switch(TeamToSet)
+	{
+		case CS_TEAM_T: TeamName = "Terrorist";
+		case CS_TEAM_CT: TeamName = "CT";
+		case CS_TEAM_SPECTATOR: TeamName = "Spectator";
+	}
+	
+	new bool:ShouldRevive = GetConVarBool(hcv_ucReviveOnTeamChange);
+	
+	for(new i=0;i < target_count;i++)
+	{
+		new target = target_list[i];
+		
+		ShowActivity2(client, "[SM] ", "Set \"%N\"s team to %s.", target, TeamName); 
+		
+		if(TeamToSet == CS_TEAM_SPECTATOR)
+		{
+			UC_StripPlayerWeapons(target); // So he doesn't drop his weapon during the team swap.
+			
+			ChangeClientTeam(target, TeamToSet); // Boy, I wonder which team...
+		}	
+		else
+		{
+			CS_SwitchTeam(target, TeamToSet);
+			
+			if(ShouldRevive)
+				CS_RespawnPlayer(target);
+		}
 	}
 	
 	return Plugin_Handled;
@@ -3703,6 +3917,49 @@ public WepStatsSelectedMenu_Handler(Handle:hMenu, MenuAction:action, client, ite
 		ShowSelectedWepStatMenu(client, i);
 	}
 }
+
+public Action:Command_UC(client, args)
+{
+	new Handle:hMenu = CreateMenu(UCMenu_Handler);
+	
+	new Handle:Trie_Snapshot = CreateTrieSnapshot(Trie_UCCommands);
+	
+	new size = TrieSnapshotLength(Trie_Snapshot);
+	
+	new String:buffer[256], adminflags;
+	
+	AddMenuItem(hMenu, "sm_settings", "sm_settings");
+	
+	for(new i=0;i < size;i++)
+	{
+		GetTrieSnapshotKey(Trie_Snapshot, i, buffer, sizeof(buffer));
+		
+		GetTrieValue(Trie_UCCommands, buffer, adminflags);
+		
+		if(CheckCommandAccess(client, "sm_null_command", adminflags, true))
+			AddMenuItem(hMenu, buffer, buffer);
+	}
+
+	CloseHandle(Trie_Snapshot);
+	DisplayMenu(hMenu, client, MENU_TIME_FOREVER);
+}
+
+
+public UCMenu_Handler(Handle:hMenu, MenuAction:action, client, item)
+{
+	if(action == MenuAction_End)
+		CloseHandle(hMenu);
+		
+	else if(action == MenuAction_Select)
+	{
+		new String:Command[50], iIgnore, String:sIgnore[1];
+		GetMenuItem(hMenu, item, Command, sizeof(Command), iIgnore, sIgnore, 0);
+		
+		FakeClientCommand(client, Command);
+	}
+	return 0;
+}
+
 stock UC_StripPlayerWeapons(client)
 {
 	if(!IsValidPlayer(client))
@@ -4545,7 +4802,7 @@ stock bool:UC_IsNullVector(const Float:Vector[3])
 
 // https://github.com/Drixevel/Sourcemod-Resources/blob/master/sourcemod-misc.inc
 
-stock bool:IsStringNumber(const String:str[])
+stock bool:UC_IsStringNumber(const String:str[])
 {
 	new x = 0;
 	new bool:numbersFound;
@@ -4617,3 +4874,16 @@ stock UC_PrintCenterTextAll(const String:msg_name[], const String:param1[]="", c
      
 	EndMessage(); 
 }  
+
+// Registers a command and saves it for later when we wanna iterate all commands.
+stock UC_RegAdminCmd(const String:cmd[], ConCmd callback, adminflags, const String:description[]="", const String:group[]="", flags=0)
+{
+	RegAdminCmd(cmd, callback, adminflags, description, group, flags);
+	SetTrieValue(Trie_UCCommands, cmd, adminflags);
+}
+
+stock UC_RegConsoleCmd(const String:cmd[], ConCmd:callback, const String:description[]="", flags=0)
+{
+	RegConsoleCmd(cmd, callback, description, flags);
+	SetTrieValue(Trie_UCCommands, cmd, 0);
+}
