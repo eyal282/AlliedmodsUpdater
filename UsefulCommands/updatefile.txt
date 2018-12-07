@@ -2,11 +2,11 @@
 {
 	"Version"
 	{
-		"Latest"	"2.8"
+		"Latest"	"2.9"
 	}
 	
-	"Notes"	"Useful Commands is now updated to version 2.8"
-	"Notes"	"Check https://forums.alliedmods.net/showthread.php?p=2617618 for more info."
+	"Notes"	"Useful Commands is now updated to version 2.9"
+	"Notes"	"Your server will now force itself to display cvars in gametracker, specifically uc_version."
 }
 	
 "Files"
