@@ -22,7 +22,7 @@
 
 //#define TEST
 
-new const String:PLUGIN_VERSION[] = "2.8";
+new const String:PLUGIN_VERSION[] = "2.9";
 
 public Plugin:myinfo = 
 {
@@ -590,6 +590,17 @@ public OnConfigsExecuted()
 	if(!isCSGO())
 		return;
 	
+	if(!FileExists("gamerulescvars.txt"))
+	{
+		new Handle:keyValues = CreateKeyValues("NotifyRulesCvars");
+		
+		KvSetNum(keyValues, "uc_version", 1);
+		
+		KvRewind(keyValues);
+		
+		KeyValuesToFile(keyValues, "gamerulescvars.txt");
+		
+	}	
 	SetConVarInt(hcv_mpAnyoneCanPickupC4, GetConVarInt(hcv_ucSpecialC4Rules));
 	
 	new Handle:keyValues = CreateKeyValues("items_game")
@@ -1422,10 +1433,10 @@ public Action:Event_PlayerDeath(Handle:hEvent, const String:Name[], bool:dontBro
 			{
 				new Winner = GetClientOfUserId(GetEventInt(hEvent, "attacker"));
 					
-				if(!IsValidPlayer(Winner) || IsValidPlayer(Winner) && (client == Winner || GetClientTeam(Winner) != CS_TEAM_T) || !IsPlayerAlive(Winner))
+				if(Winner == 0 ||	Winner != 0 && (client == Winner || GetClientTeam(Winner) != CS_TEAM_T) || !IsPlayerAlive(Winner))
 					Winner = GetClientOfUserId(GetEventInt(hEvent, "assister"));
 					
-				if(!IsValidPlayer(Winner) || IsValidPlayer(Winner) && (client == Winner || GetClientTeam(Winner) != CS_TEAM_T) || !IsPlayerAlive(Winner))
+				if(Winner == 0 || Winner != 0 && (client == Winner || GetClientTeam(Winner) != CS_TEAM_T) || !IsPlayerAlive(Winner))
 				{
 					new players[MaxClients+1], count;
 					
@@ -1597,6 +1608,7 @@ public Action:Timer_AnnounceUCPlugin(Handle:hTimer, UserId)
 	if(client == 0)
 		return Plugin_Continue;
 
+	TIMER_ANNOUNCEPLUGIN[client] = INVALID_HANDLE;
 	PrintToChat(client, " \x01This server is running\x05 Useful Commands\x01 by\x04 Eyal282\x01!");
 	PrintToChat(client, " \x01Type\x05 !uc\x01 for the list of\x05 Useful Commands\x01.");
 	return Plugin_Continue;
@@ -3969,9 +3981,6 @@ public UCMenu_Handler(Handle:hMenu, MenuAction:action, client, item)
 
 stock UC_StripPlayerWeapons(client)
 {
-	if(!IsValidPlayer(client))
-		return;
-		
 	for(new i=0;i <= 5;i++)
 	{
 		new weapon = GetPlayerWeaponSlot(client, i);
@@ -4618,15 +4627,15 @@ public Action:DeletePartyParticles(Handle:timer, any:particle)
 
 
 
-stock bool:IsValidPlayer(client)
+stock bool:IsEntityPlayer(entity)
 {
-	if(client <= 0)
+	if(entity <= 0)
 		return false;
 		
-	else if(client > MaxClients)
+	else if(entity > MaxClients)
 		return false;
 		
-	return IsClientInGame(client);
+	return true;
 }
 
 
