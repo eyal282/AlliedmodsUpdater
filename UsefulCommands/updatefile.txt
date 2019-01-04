@@ -2,14 +2,18 @@
 {
 	"Version"
 	{
-		"Latest"	"2.9"
+		"Latest"	"3.0"
 	}
 	
-	"Notes"	"Useful Commands is now updated to version 2.9"
-	"Notes"	"Your server will now force itself to display cvars in gametracker, specifically uc_version."
+	"Notes"	"Useful Commands is now updated to version 3.0"
+	"Notes"	"The biggest UC update so far, I forgot most of the new stuff."
+	"Notes"	"If you chose to do so with the host_xxxx cvars, your server will display on 3rd party services like gametracker.com every single cvar you have with FCVAR_NOTIFY ( obviously passwords aren't FCVAR_NOTIFY )"
+	"Notes" "The plugin now has translations, instead of building your own translation, submit your translation over the Allied Modders thread"
+	"Notes" "Some bug fixes"
 }
 	
 "Files"
 {
 	"Plugin"	"Path_SM/plugins/UsefulCommands.smx"
+	"Plugin"	"Path_SM/translations/UsefulCommands.phrases.txt"
 }
