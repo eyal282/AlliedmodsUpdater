@@ -1,13 +1,20 @@
 // To do: Add weapon stats comparison based on what I used with Big Bertha
 
 #include <sourcemod>
+
 #include <sdkhooks>
 #include <sdktools>
 #include <cstrike>
 #include <clientprefs>
 
+#define MAX_INTEGER 2147483647
+#define MIN_FLOAT -2147483647.0 // I think -2147483648 is lowest but meh.
+
+#define CHRISTMASS_PRESENT_BODYINDEX 1
+
 #define MAX_POSSIBLE_HP 65535
 #define MAX_POSSIBLE_MONEY 65535
+// I'll redefine these if needed. I doubt they'll change.
 
 #define HEADSHOT_MULTIPLIER 4.0
 #define STOMACHE_MULTIPLIER 1.25
@@ -16,13 +23,16 @@
 
 #define HUD_PRINTCENTER        4 
 
+#define GAME_RULES_CVARS_PATH "gamerulescvars.txt"
+
 #undef REQUIRE_PLUGIN
 #tryinclude <updater>  // Comment out this line to remove updater support by force.
+#tryinclude <autoexecconfig>
 #define UPDATE_URL    "https://raw.githubusercontent.com/eyal282/AlliedmodsUpdater/master/UsefulCommands/updatefile.txt"
 
 //#define TEST
 
-new const String:PLUGIN_VERSION[] = "2.9";
+new const String:PLUGIN_VERSION[] = "3.0";
 
 public Plugin:myinfo = 
 {
@@ -34,8 +44,6 @@ public Plugin:myinfo =
 }
 
 #define COMMAND_FILTER_NONE 0
-
-#define UC_ADMFLAG_SHOWIP ADMFLAG_ROOT
 
 #define MAX_HUG_DISTANCE 100.0
 
@@ -53,8 +61,19 @@ public Plugin:myinfo =
 #define PARTYMODE_DEFUSE (1<<0)
 #define PARTYMODE_ZEUS (1<<1)
 
+new String:UCTag[65];
+
 new ChickenOriginPosition;
 
+new const String:Colors[][] = 
+{
+	"{NORMAL}", "{RED}", "{GREEN}", "{LIGHTGREEN}", "{OLIVE}", "{LIGHTRED}", "{GRAY}", "{YELLOW}", "{ORANGE}", "{BLUE}", "{PINK}"
+}
+
+new const String:ColorEquivalents[][] =
+{
+	"\x01", "\x02", "\x03", "\x04", "\x05", "\x06", "\x07", "\x08", "\x09", "\x10", "\x0C", "\x0E"
+}
 
 enum FX
 {
@@ -109,6 +128,8 @@ new Float:DeathOrigin[MAXPLAYERS+1][3];
 
 new bool:UberSlapped[MAXPLAYERS+1], TotalSlaps[MAXPLAYERS+1];
 
+//new LastHolidayCvar = 0;
+
 new Handle:Trie_UCCommands = INVALID_HANDLE;
 
 new Handle:hcv_PartyMode = INVALID_HANDLE;
@@ -127,6 +148,9 @@ new Handle:hcv_ucPartyMode = INVALID_HANDLE;
 new Handle:hcv_ucPartyModeDefault = INVALID_HANDLE;
 new Handle:hcv_ucAnnouncePlugin = INVALID_HANDLE;
 new Handle:hcv_ucReviveOnTeamChange = INVALID_HANDLE;
+new Handle:hcv_ucPacketNotifyCvars = INVALID_HANDLE;
+new Handle:hcv_ucGlowType = INVALID_HANDLE;
+new Handle:hcv_ucTag = INVALID_HANDLE;
 
 new Handle:hCookie_EnablePM = INVALID_HANDLE;
 new Handle:hCookie_AceFunFact = INVALID_HANDLE;
@@ -152,6 +176,7 @@ new Handle:ChickenOriginArray = INVALID_HANDLE;
 
 new Handle:fw_ucAce = INVALID_HANDLE;
 new Handle:fw_ucAcePost = INVALID_HANDLE;
+new Handle:fw_ucWeaponStatsRetrievedPost = INVALID_HANDLE;
 
 new bool:AceSent = false, TrueTeam[MAXPLAYERS+1];
 
@@ -207,10 +232,14 @@ enum enWepStatsList
 	wepStatsDamageDropoff,
 	wepStatsMaxDamageRange,
 	wepStatsPalletsPerShot, // For shotguns
+	wepStatsDamagePerPallet,
 	wepStatsTapDistanceNoArmor,
 	wepStatsTapDistanceArmor,
-	bool:wepStatsIsAutomatic
+	bool:wepStatsIsAutomatic,
+	wepStatsDamagePerSecondNoArmor,
+	wepStatsDamagePerSecondArmor
 };	
+
 new wepStatsList[CSWeapon_MAX_WEAPONS_NO_KNIFES][enWepStatsList];
 
 new CSWeaponID:wepStatsIgnore[] =
@@ -238,41 +267,76 @@ new CSWeaponID:wepStatsIgnore[] =
 public APLRes:AskPluginLoad2(Handle:myself, bool:bLate, String:error[], length)
 {
 	isLateLoaded = bLate;
+	
+	CreateNative("UsefulCommands_GetWeaponStats", Native_GetWeaponStatsList);
 }
+
+// native UsefulCommands_GetWeaponStats(CSWeaponID:WeaponID, &StatsList[])
+
+public Native_GetWeaponStatsList(Handle:caller, numParams)
+{
+	new CSWeaponID:WeaponID = GetNativeCell(1);
+		
+	if(!CS_IsValidWeaponID(WeaponID))
+	{
+		ThrowNativeError(SP_ERROR_NATIVE, "Invalid weapon ID %i", WeaponID);
+		return false;
+	}
+	
+	SetNativeArray(2, wepStatsList[WeaponID], sizeof(wepStatsList[]));
+	return true;
+}
+
 public OnPluginStart()
 {
+	AutoExecConfig_SetFile("UsefulCommands");
+	
 	Trie_UCCommands = CreateTrie();
 	
+	LoadTranslations("UsefulCommands.phrases");
+	LoadTranslations("common.phrases");
+	
+	fw_ucAce = CreateGlobalForward("UsefulCommands_OnPlayerAce", ET_Event, Param_CellByRef, Param_String);
+	fw_ucAcePost = CreateGlobalForward("UsefulCommands_OnPlayerAcePost", ET_Ignore, Param_Cell, Param_String);
+	fw_ucWeaponStatsRetrievedPost = CreateGlobalForward("UsefulCommands_OnWeaponStatsRetrievedPost", ET_Ignore);
+	
+	// public UsefulCommands_OnPlayerAce(&client, String:FunFact[])
+	// public UsefulCommands_OnPlayerAcePost(client, const String:FunFact[])
+	
+	// public UsefulCommands_OnWeaponStatsRetrievedPost()
 	GameName = GetEngineVersion();
 	
 	//hcv_svCheats = FindConVar("sv_cheats");
 	
 	//svCheatsFlags = GetConVarFlags(hcv_svCheats);
 	
-
-	if(isLateLoaded)
-	{
-
-		for(new i=1;i <= MaxClients;i++)
-		{	
-			if(!IsClientInGame(i))
-				continue;
-				
-			OnClientPutInServer(i);
-		}
-		
-		OnAllPluginsLoaded();
-		OnMapStart();
-	}
+	
+	SetConVarString(CreateConVar("uc_version", PLUGIN_VERSION, _, FCVAR_NOTIFY|FCVAR_PROTECTED), PLUGIN_VERSION);
+	hcv_ucTag = UC_CreateConVar("uc_tag", "[{RED}UC{NORMAL}] {NORMAL}", _,FCVAR_PROTECTED);
+	hcv_TagScale = UC_CreateConVar("uc_bullet_tagging_scale", "1.0", "5000000.0 is more than enough to disable tagging completely. Below 1.0 makes tagging stronger. 1.0 for default game behaviour", FCVAR_NOTIFY, true, 0.0);
+	hcv_ucSpecialC4Rules = UC_CreateConVar("uc_special_bomb_rules", "0", "If 1, CT can pick-up C4 but can't abuse it in any way ( e.g dropping it in unreachable spots ) and can't get rid of it unless to another player.", FCVAR_NOTIFY);
+	hcv_ucAcePriority = UC_CreateConVar("uc_ace_priority", "2", "Prioritize Ace over all other fun facts of a round's end and print a message when a player makes an ace. Set to 2 if you want players to have a custom fun fact on ace.");
+	hcv_ucReviveOnTeamChange = UC_CreateConVar("uc_revive_on_team_change", "1", "Revive the player when an admin sets his team.");
+	
+	GetConVarString(hcv_ucTag, UCTag, sizeof(UCTag));
+	HookConVarChange(hcv_ucTag, hcvChange_ucTag);
 	
 	if(isCSGO())
 	{
 		
-		hcv_ucTeleportBomb = CreateConVar("uc_teleport_bomb", "1", "If 1, All trigger_teleport entities will have a trigger_bomb_reset attached to them so bombs never get stuck outside of reach in the game. Set to -1 to destroy this mechanism completely to reserve in entity count.", FCVAR_NOTIFY);
+		hcv_ucTeleportBomb = UC_CreateConVar("uc_teleport_bomb", "1", "If 1, All trigger_teleport entities will have a trigger_bomb_reset attached to them so bombs never get stuck outside of reach in the game. Set to -1 to destroy this mechanism completely to reserve in entity count.", FCVAR_NOTIFY);
 		
-		hcv_ucUseBombPickup = CreateConVar("uc_use_bomb", "1", "If 1, Terrorists can pick up C4 by pressing E on it.", FCVAR_NOTIFY);
+		hcv_ucUseBombPickup = UC_CreateConVar("uc_use_bomb", "1", "If 1, Terrorists can pick up C4 by pressing E on it.", FCVAR_NOTIFY);
 		
+		hcv_ucPacketNotifyCvars = UC_CreateConVar("uc_packet_notify_cvars", "2", "If 2, acts like 1 but also deletes the gamerulescvars.txt file before doing it. If 1, UC will put all FCVAR_NOTIFY cvars in gamerulescvars.txt", FCVAR_NOTIFY);
+		
+		hcv_ucGlowType = UC_CreateConVar("uc_glow_type", "1", "0 = Wallhack, 1 = Fullbody, 2 = Surround Player, 3 = Blinking and Surround Player");
+		
+		hcv_ucAnnouncePlugin = UC_CreateConVar("uc_announce_plugin", "36.5", "Announces to joining players that the best utility plugin is running, this cvar's value when after a player joins he'll get the message. 0 to disable.");
+	
 		HookConVarChange(hcv_ucTeleportBomb, OnTeleportBombChanged);
+				
+		SetCookieMenuItem(PartyModeCookieMenu_Handler, 0, "Party Mode");
 		
 		if(TeleportsArray == INVALID_HANDLE)
 			TeleportsArray = CreateArray(1);
@@ -295,6 +359,22 @@ public OnPluginStart()
 		Updater_AddPlugin(UPDATE_URL);
 	}
 	#endif
+	
+
+	if(isLateLoaded)
+	{
+
+		for(new i=1;i <= MaxClients;i++)
+		{	
+			if(!IsClientInGame(i))
+				continue;
+				
+			OnClientPutInServer(i);
+		}
+		
+		OnAllPluginsLoaded();
+		OnMapStart();
+	}
 }
 
 #if defined _updater_included
@@ -327,19 +407,7 @@ public Action:Test(  int clients[64],
  }
 */
 public OnAllPluginsLoaded()
-{	
-	fw_ucAce = CreateGlobalForward("UsefulCommands_OnPlayerAce", ET_Event, Param_CellByRef, Param_String);
-	fw_ucAcePost = CreateGlobalForward("UsefulCommands_OnPlayerAcePost", ET_Ignore, Param_Cell, Param_String);
-	
-	// public UsefulCommands_OnPlayerAce(&client, String:FunFact[])
-	// public UsefulCommands_OnPlayerAcePost(client, const String:FunFact[])
-	
-	SetConVarString(CreateConVar("uc_version", PLUGIN_VERSION, _, FCVAR_NOTIFY|FCVAR_DONTRECORD|FCVAR_PROTECTED), PLUGIN_VERSION);
-	hcv_TagScale = CreateConVar("uc_bullet_tagging_scale", "1.0", "5000000.0 is more than enough to disable tagging completely. Below 1.0 makes tagging stronger. 1.0 for default game behaviour", FCVAR_NOTIFY, true, 0.0);
-	hcv_ucSpecialC4Rules = CreateConVar("uc_special_bomb_rules", "0", "If 1, CT can pick-up C4 but can't abuse it in any way ( e.g dropping it in unreachable spots ) and can't get rid of it unless to another player.", FCVAR_NOTIFY);
-	hcv_ucAcePriority = CreateConVar("uc_ace_priority", "2", "Prioritize Ace over all other fun facts of a round's end and print a message when a player makes an ace. Set to 2 if you want players to have a custom fun fact on ace.");
-	hcv_ucAnnouncePlugin = CreateConVar("uc_announce_plugin", "36.5", "Announces to joining players that the best utility plugin is running, this cvar's value when after a player joins he'll get the message. 0 to disable.");
-	hcv_ucReviveOnTeamChange = CreateConVar("uc_revive_on_team_change", "1", "Revive the player when an admin sets his team.");
+{
 	
 	if(!CommandExists("sm_revive"))
 		UC_RegAdminCmd("sm_revive", Command_Revive, ADMFLAG_BAN, "Respawns a player from the dead");
@@ -405,8 +473,10 @@ public OnAllPluginsLoaded()
 		//UC_RegAdminCmd("sm_cheat", Command_Cheat, ADMFLAG_CHEATS, "Writes a command bypassing its cheat flag.");	
 		
 	if(!CommandExists("sm_last"))
+	{
 		UC_RegAdminCmd("sm_last", Command_Last, ADMFLAG_BAN, "Shows a full list of every single player that ever visited");
-		
+		RegAdminCmd("sm_uc_last_showip", Command_Last, ADMFLAG_ROOT);
+	}	
 	if(!CommandExists("sm_exec"))
 		UC_RegAdminCmd("sm_exec", Command_Exec, ADMFLAG_BAN, "Makes a player execute a command. Use !fakeexec if doesn't work.");
 		
@@ -443,8 +513,8 @@ public OnAllPluginsLoaded()
 			
 		hcv_PartyMode = FindConVar("sv_party_mode");
 		
-		hcv_ucPartyMode = CreateConVar("uc_party_mode", "2", "0 = Nobody can access party mode. 1 = You can choose to participate in party mode. 2 = Zeus will cost 100$ as tradition", FCVAR_NOTIFY);
-		hcv_ucPartyModeDefault = CreateConVar("uc_party_mode_default", "3", "Party mode cookie to set for new comers. 0 = Disabled, 1 = Defuse balloons only, 2 = Zeus only, 3 = Both.");
+		hcv_ucPartyMode = UC_CreateConVar("uc_party_mode", "2", "0 = Nobody can access party mode. 1 = You can choose to participate in party mode. 2 = Zeus will cost 100$ as tradition", FCVAR_NOTIFY);
+		hcv_ucPartyModeDefault = UC_CreateConVar("uc_party_mode_default", "3", "Party mode cookie to set for new comers. 0 = Disabled, 1 = Defuse balloons only, 2 = Zeus only, 3 = Both.");
 	
 		hCookie_EnablePM = RegClientCookie("UsefulCommands_PartyMode", "Party Mode flags. 0 = Disabled, 1 = Defuse balloons only, 2 = Zeus only, 3 = Both.", CookieAccess_Public);
 		hCookie_AceFunFact = RegClientCookie("UsefulCommands_AceFunFact", "When you make an ace, this will be the fun fact to send to the server. $name -> your name. $team -> your team. $opteam -> your opponent team.", CookieAccess_Public);	
@@ -452,8 +522,6 @@ public OnAllPluginsLoaded()
 		HookEvent("bomb_defused", Event_BombDefused, EventHookMode_Pre);
 		HookEvent("weapon_fire", Event_WeaponFire, EventHookMode_Pre);
 		HookEvent("player_use", Event_PlayerUse, EventHookMode_Post);
-		
-		SetCookieMenuItem(PartyModeCookieMenu_Handler, 0, "Party Mode");
 		
 		hcv_mpAnyoneCanPickupC4 = FindConVar("mp_anyone_can_pickup_c4");
 		
@@ -463,9 +531,9 @@ public OnAllPluginsLoaded()
 		{
 			UC_RegAdminCmd("sm_chicken", Command_Chicken, ADMFLAG_BAN, "Allows you to set up the map's chicken spawns.");	
 			UC_RegAdminCmd("sm_ucedit", Command_UCEdit, ADMFLAG_BAN, "Allows you to teleport to the chicken spawner prior to delete.");
-			hcv_ucMaxChickens = CreateConVar("uc_max_chickens", "5", "Maximum amount of chickens UC will generate.");
-			hcv_ucMinChickenTime = CreateConVar("uc_min_chicken_time", "5.0", "Minimum amount of time between a chicken's death and the recreation.");
-			hcv_ucMaxChickenTime = CreateConVar("uc_max_chicken_time", "10.0", "Maximum amount of time between a chicken's death and the recreation.");
+			hcv_ucMaxChickens = UC_CreateConVar("uc_max_chickens", "5", "Maximum amount of chickens UC will generate.");
+			hcv_ucMinChickenTime = UC_CreateConVar("uc_min_chicken_time", "5.0", "Minimum amount of time between a chicken's death and the recreation.");
+			hcv_ucMaxChickenTime = UC_CreateConVar("uc_max_chicken_time", "10.0", "Maximum amount of time between a chicken's death and the recreation.");
 		}
 		
 		if(!CommandExists("sm_wepstats"))
@@ -483,6 +551,18 @@ public OnAllPluginsLoaded()
 	HookEvent("round_start", Event_RoundStart, EventHookMode_PostNoCopy);
 	HookEvent("round_end", Event_RoundEnd, EventHookMode_Post);
 	
+	#if defined _autoexecconfig_included
+	
+	AutoExecConfig_ExecuteFile();
+
+	AutoExecConfig_CleanFile();
+	
+	#endif
+}
+
+public hcvChange_ucTag(Handle:convar, const String:oldValue[], const String:newValue[])
+{
+	FormatEx(UCTag, sizeof(UCTag), newValue);
 }
 
 public ConnectToDatabase()
@@ -535,6 +615,13 @@ public SQLCB_LoadChickenSpawns(Handle:db, Handle:hndl, const String:sError[], da
 	}
 }
 
+public OnEntityCreated(entity, const String:Classname[])
+{
+	if(StrEqual(Classname, "trigger_teleport", true))
+		SDKHook(entity, SDKHook_SpawnPost, Event_TeleportSpawnPost);
+	
+}
+	
 public Event_TeleportSpawnPost(entity)
 {
 	if(!MapStarted)
@@ -584,26 +671,60 @@ public Event_TeleportSpawnPost(entity)
 		AcceptEntityInput(bombReset, "Disable");
 }
 
-
 public OnConfigsExecuted()
 {
 	if(!isCSGO())
 		return;
 	
-	if(!FileExists("gamerulescvars.txt"))
+	new bool:Exists = FileExists(GAME_RULES_CVARS_PATH);
+	
+	new ucPacketNotifyCvars = GetConVarInt(hcv_ucPacketNotifyCvars);
+	if( ucPacketNotifyCvars != 0 && ( !Exists || ( Exists && ucPacketNotifyCvars == 2 ) ) )
 	{
+		
+		new Handle:SortArray = CreateArray(128);
 		new Handle:keyValues = CreateKeyValues("NotifyRulesCvars");
 		
-		KvSetNum(keyValues, "uc_version", 1);
+		new String:CvarName[128], bool:bCommand, flags, String:sDummy_Value[1];
+		new Handle:iterator = FindFirstConCommand(CvarName, sizeof(CvarName), bCommand, flags, sDummy_Value, 0)
 		
-		KvRewind(keyValues);
+		if(iterator != INVALID_HANDLE)
+		{
+			if(!bCommand && (flags & FCVAR_NOTIFY))
+				PushArrayString(SortArray, CvarName);
+				
+			while(FindNextConCommand(iterator, CvarName, sizeof(CvarName), bCommand, flags, sDummy_Value, 0))
+			{
+				if(bCommand)
+					continue;
+					
+				else if(flags & FCVAR_NOTIFY)
+					PushArrayString(SortArray, CvarName);
+			}
+			
+			CloseHandle(iterator);
+			
+			SortADTArray(SortArray, Sort_Ascending, Sort_String);
+			
+			new size = GetArraySize(SortArray);
+			
+			for(new i=0;i < size;i++)
+			{
+				GetArrayString(SortArray, i, CvarName, sizeof(CvarName));
+					
+				KvSetNum(keyValues, CvarName, 1);
+			}
+			
+			KvRewind(keyValues);
+			
+			KeyValuesToFile(keyValues, GAME_RULES_CVARS_PATH);
+		}
 		
-		KeyValuesToFile(keyValues, "gamerulescvars.txt");
-		
+		CloseHandle(SortArray);
 	}	
 	SetConVarInt(hcv_mpAnyoneCanPickupC4, GetConVarInt(hcv_ucSpecialC4Rules));
 	
-	new Handle:keyValues = CreateKeyValues("items_game")
+	new KeyValues:keyValues = CreateKeyValues("items_game")
 	
 	if(!FileToKeyValues(keyValues, "scripts/items/items_game.txt"))
 		return;
@@ -614,7 +735,7 @@ public OnConfigsExecuted()
 	new WepNone = view_as<int>(CSWeapon_NONE);
 	
 	new String:buffer[64];
-	while(KvGotoNextKey(keyValues))
+	do
 	{
 		KvGetSectionName(keyValues, buffer, sizeof(buffer));
 	
@@ -624,12 +745,13 @@ public OnConfigsExecuted()
 			break;
 		}
 	}
+	while(KvGotoNextKey(keyValues))
 	
 	// Now we save position of prefabs and find all default values for damage, fire rate, and etc.
 	
 	KvSavePosition(keyValues);
 	
-	while(KvGotoNextKey(keyValues))
+	do
 	{
 		KvGetSectionName(keyValues, buffer, sizeof(buffer));
 	
@@ -639,8 +761,9 @@ public OnConfigsExecuted()
 			break;
 		}
 	}
-	
 	while(KvGotoNextKey(keyValues))
+	
+	do
 	{
 		KvGetSectionName(keyValues, buffer, sizeof(buffer));
 	
@@ -650,6 +773,7 @@ public OnConfigsExecuted()
 			break;
 		}
 	}
+	while(KvGotoNextKey(keyValues))
 	
 	// Default values.
 	wepStatsList[WepNone][wepStatsFireRate] = RoundFloat((1.0 / KvGetFloat(keyValues, "cycletime", -1.0)) * 60.0); // By RPM = Rounds per Minute. Note: NEVER ALLOW DEFAULT VALUE 0.0 WHEN DIVIDING IT!!!
@@ -664,8 +788,8 @@ public OnConfigsExecuted()
 	
 	KvGoBack(keyValues);
 	
-	new String:CompareBuffer[64], String:Alias[20];
-	while(KvGotoNextKey(keyValues))
+	new String:CompareBuffer[64], String:Alias[64];
+	do
 	{
 		KvGetSectionName(keyValues, buffer, sizeof(buffer));
 
@@ -685,22 +809,27 @@ public OnConfigsExecuted()
 							KvSavePosition(keyValues); // Save our position.
 							KvGotoFirstSubKey(keyValues);
 							
-							while(KvGotoNextKey(keyValues)) // Find them attributes.
+							new bool:bBreak = false;
+							do
 							{
 								KvGetSectionName(keyValues, buffer, sizeof(buffer)); // We can overwrite the last buffer we took, it's irrelevant now :D
 	
 								if(StrEqual(buffer, "attributes"))
 								{
 									KvGotoFirstSubKey(keyValues);
-									break;
+									bBreak = true;
 								}
 							}
+							while(!bBreak && KvGotoNextKey(keyValues)) // Find them attributes.
 							
-							wepStatsList[i][wepStatsFireRate] = RoundFloat((1.0 / KvGetFloat(keyValues, "cycletime", -1.0)) * 60.0); // By RPM = Rounds per Minute. Note: NEVER ALLOW DEFAULT VALUE 0.0 WHEN DIVIDING IT!!!
+							new Float:cycletime;
+							wepStatsList[i][wepStatsFireRate] = RoundFloat((1.0 / (cycletime=KvGetFloat(keyValues, "cycletime", -1.0))) * 60.0); // By RPM = Rounds per Minute. Note: NEVER ALLOW DEFAULT VALUE 0.0 WHEN DIVIDING IT!!!
 							
 							if(wepStatsList[i][wepStatsFireRate] == -60)
+							{
 								wepStatsList[i][wepStatsFireRate] = wepStatsList[WepNone][wepStatsFireRate];
-							
+								cycletime = (1.0 / (wepStatsList[i][wepStatsFireRate] / 60.0));
+							}
 							wepStatsList[i][wepStatsArmorPenetration] = KvGetFloat(keyValues, "armor ratio", -1.0) * 50.0; // It maxes at 2.000 to be 100% armor penetration.
 							
 							if(wepStatsList[i][wepStatsArmorPenetration] == -50.0)
@@ -720,7 +849,8 @@ public OnConfigsExecuted()
 							}	
 							wepStatsList[i][wepStatsMaxDamageRange] = KvGetNum(keyValues, "range", wepStatsList[WepNone][wepStatsMaxDamageRange]);
 							wepStatsList[i][wepStatsPalletsPerShot] = KvGetNum(keyValues, "bullets", wepStatsList[WepNone][wepStatsPalletsPerShot]);
-							wepStatsList[i][wepStatsDamage] = KvGetNum(keyValues, "damage", wepStatsList[WepNone][wepStatsDamage]) * wepStatsList[i][wepStatsPalletsPerShot];
+							wepStatsList[i][wepStatsDamage] = (wepStatsList[i][wepStatsDamagePerPallet] = KvGetNum(keyValues, "damage", wepStatsList[WepNone][wepStatsDamage])) * wepStatsList[i][wepStatsPalletsPerShot];
+							
 							wepStatsList[i][wepStatsIsAutomatic] = view_as<bool>(KvGetNum(keyValues, "is full auto", wepStatsList[WepNone][wepStatsIsAutomatic]));
 							// Now we calculate one tap distance. 
 							
@@ -744,17 +874,25 @@ public OnConfigsExecuted()
 								
 							if(wepStatsList[i][wepStatsTapDistanceArmor] > wepStatsList[i][wepStatsMaxDamageRange])
 								wepStatsList[i][wepStatsTapDistanceArmor] = wepStatsList[i][wepStatsMaxDamageRange];
-								
+							
+							wepStatsList[i][wepStatsDamagePerSecondNoArmor] = RoundFloat((1.0 / cycletime) * wepStatsList[i][wepStatsDamage]);
+							wepStatsList[i][wepStatsDamagePerSecondArmor] = RoundFloat((1.0 / cycletime) * wepStatsList[i][wepStatsDamage] * (wepStatsList[i][wepStatsArmorPenetration]/100));
+							
 							KvGoBack(keyValues);
-							i = CSWeapon_MAX_WEAPONS_NO_KNIFES; // Equivalent of break.
+							i = CSWeapon_MAX_WEAPONS; // Equivalent of break.
 						}
 					}
 				}
 			}
 		}
 	}
+	while(KvGotoNextKey(keyValues))
 
 	CloseHandle(keyValues);
+	
+	Call_StartForward(fw_ucWeaponStatsRetrievedPost);
+	
+	Call_Finish(keyValues); // keyValues was already disposed.
 
 }
 	
@@ -867,7 +1005,7 @@ public Action:SoundHook_PartyMode(clients[64], &numClients, String:sample[PLATFO
 	if(!StrEqual(sample, PartySound))
 		return Plugin_Continue;
 
-	PrintToChatAll("b");
+	UC_PrintToChatAll("b");
 	new numClientsToUse = 0;
 	new clientsToUse[64];
 	
@@ -908,7 +1046,7 @@ public Action:Event_BombDefused(Handle:hEvent, const String:Name[], bool:dontBro
 	new Float:Origin[3];
 	GetEntPropVector(client, Prop_Data, "m_vecOrigin", Origin);
 	
-	new clients[MaxClients];
+	new clients[MaxClients+1];
 	new total = 0;
 	
 	for (new i=1; i<=MaxClients; i++)
@@ -950,7 +1088,7 @@ public Action:Event_WeaponFire(Handle:hEvent, const String:Name[], bool:dontBroa
 	new Float:Origin[3];
 	GetEntPropVector(client, Prop_Data, "m_vecOrigin", Origin);
 	
-	new clients[MaxClients];
+	new clients[MaxClients+1];
 	new total = 0;
 	
 	for (new i=1; i<=MaxClients; i++)
@@ -1044,13 +1182,12 @@ public Action:Event_PlayerUse(Handle:hEvent, const String:Name[], bool:dontBroad
 }
 
 public Action:Event_RoundEnd(Handle:hEvent, const String:Name[], bool:dontBroadcast)
-{
+{	
 	if(isCSGO())
 		return Plugin_Continue;
 	
 	else if(!BlockedWinPanel)	
 		return Plugin_Continue;
-		
 		
 	new WinningTeam = GetEventInt(hEvent, "winner");
 	
@@ -1079,7 +1216,7 @@ public Action:Event_RoundEnd(Handle:hEvent, const String:Name[], bool:dontBroadc
 }
 public Action:Event_RoundStart(Handle:hEvent, const String:Name[], bool:dontBroadcast)
 {
-	// AceCandidate is -1 for nobody and -2 for disqualification.
+	// AceCandidate is -1 for nobody and -2 for disqualification of the team.
 	AceCandidate[CS_TEAM_CT] = -1;
 	AceCandidate[CS_TEAM_T] = -1;
 	
@@ -1253,7 +1390,7 @@ public PartyModeCookieMenu_Handler(client, CookieMenuAction:action, info, String
 	if(!GetConVarBool(hcv_ucPartyMode))	
 	{
 		ShowCookieMenu(client);
-		PrintToChat(client, "Party mode is disabled by the server.");
+		UC_PrintToChat(client, "%T", "Party Mode is Disabled", client);
 		return;
 	}	
 	ShowPartyModeMenu(client);
@@ -1262,26 +1399,31 @@ public ShowPartyModeMenu(client)
 {
 	new Handle:hMenu = CreateMenu(PartyModeMenu_Handler);
 	
+	new String:TempFormat[64];
 	switch(GetClientPartyMode(client))
 	{
 		case PARTYMODE_DEFUSE:
 		{
-			AddMenuItem(hMenu, "", "Party Mode: Defuse only");	
+			Format(TempFormat, sizeof(TempFormat), "%T", "Party Mode Cookie Menu: Defuse Only", client);
+			AddMenuItem(hMenu, "", TempFormat);	
 		}	
 		
 		case PARTYMODE_ZEUS:
 		{
-			AddMenuItem(hMenu, "", "Party Mode: Zeus only");
+			Format(TempFormat, sizeof(TempFormat), "%T", "Party Mode Cookie Menu: Zeus Only", client);
+			AddMenuItem(hMenu, "", TempFormat);	
 		}
 		
 		case PARTYMODE_DEFUSE|PARTYMODE_ZEUS:
 		{
-			AddMenuItem(hMenu, "", "Party Mode: Enabled");
+			Format(TempFormat, sizeof(TempFormat), "%T", "Party Mode Cookie Menu: Enabled", client);
+			AddMenuItem(hMenu, "", TempFormat);
 		}
 		
 		default:
 		{
-			AddMenuItem(hMenu, "", "Party Mode: Disabled");	
+			Format(TempFormat, sizeof(TempFormat), "%T", "Party Mode Cookie Menu: Disabled", client);
+			AddMenuItem(hMenu, "", TempFormat);
 		}
 	}
 
@@ -1353,7 +1495,7 @@ public Action:Event_PlayerDeath(Handle:hEvent, const String:Name[], bool:dontBro
 
 	if(client == 0)
 		return;
-
+		
 	new attackerUserId = GetEventInt(hEvent, "attacker");
 	new attacker = GetClientOfUserId(attackerUserId);
 	
@@ -1572,7 +1714,9 @@ public Action:Event_CsWinPanelRound(Handle:hEvent, const String:Name[], bool:don
 public UsefulCommands_OnPlayerAcePost(client, const String:FunFact[])
 {
 	if(GetConVarInt(hcv_ucAcePriority) > 0)
-		PrintToChatAll(" \x01Player\x03 %N\x01 scored an\x05 ACE.", client);
+	{
+		UC_PrintToChatAll("%t", "Scored an Ace", client);
+	}
 }
 
 public OnClientPutInServer(client)
@@ -1609,8 +1753,8 @@ public Action:Timer_AnnounceUCPlugin(Handle:hTimer, UserId)
 		return Plugin_Continue;
 
 	TIMER_ANNOUNCEPLUGIN[client] = INVALID_HANDLE;
-	PrintToChat(client, " \x01This server is running\x05 Useful Commands\x01 by\x04 Eyal282\x01!");
-	PrintToChat(client, " \x01Type\x05 !uc\x01 for the list of\x05 Useful Commands\x01.");
+	UC_PrintToChat(client, "%t", "UC Advertise");
+	UC_PrintToChat(client, "%t", "UC Advertise 2");
 	return Plugin_Continue;
 }
 
@@ -1859,15 +2003,8 @@ public OnMapEnd()
 	}
 }
 
-public OnEntityCreated(entity, const String:Classname[])
-{
-	if(StrEqual(Classname, "trigger_teleport", true))
-		SDKHook(entity, SDKHook_SpawnPost, Event_TeleportSpawnPost);
-}
-
 public OnMapStart()
 {
-
 	RoundNumber++;
 	GetCurrentMap(MapName, sizeof(MapName));
 	
@@ -1948,10 +2085,13 @@ public OnGameFrame()
 }
 
 public Action:Command_Revive(client, args)
-{
+{	
 	if (args < 1)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_revive <#userid|name>");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Target", arg0);
 		return Plugin_Handled;
 	}
 
@@ -1959,7 +2099,7 @@ public Action:Command_Revive(client, args)
 	GetCmdArg(1, arg, sizeof(arg));
 
 	new String:target_name[MAX_TARGET_LENGTH];
-	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
 
 	target_count = ProcessTargetString(
 					arg,
@@ -1982,19 +2122,21 @@ public Action:Command_Revive(client, args)
 	{
 		new target = target_list[i];
 		
-		ShowActivity2(client, "[SM] ", "Respawned %N.", target); 
-		
 		UC_RespawnPlayer(target);
 	}
+	
+	UC_ShowActivity2(client, UCTag, "%t", "Player Respawned", target_name);
 	
 	return Plugin_Handled;
 }
 
 public Action:Command_HardRevive(client, args)
-{
+{	
 	if (args < 1)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_hrevive <#userid|name>");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Target", arg0);
 		return Plugin_Handled;
 	}
 
@@ -2002,7 +2144,7 @@ public Action:Command_HardRevive(client, args)
 	GetCmdArg(1, arg, sizeof(arg));
 
 	new String:target_name[MAX_TARGET_LENGTH];
-	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
 
 	target_count = ProcessTargetString(
 					arg,
@@ -2030,26 +2172,23 @@ public Action:Command_HardRevive(client, args)
 		UC_RespawnPlayer(target);
 		
 		if(!UC_IsNullVector(DeathOrigin[target]) && !isAlive)
-		{
-		
-			ShowActivity2(client, "[SM] ", "Respawned %N at last death position.", target); 
 			TeleportEntity(target, DeathOrigin[target], NULL_VECTOR, NULL_VECTOR);
-		}
-		else
-		{
-			ShowActivity2(client, "[SM] ", "Respawned %N.", target); 
-		}
 	}
+	
+	UC_ShowActivity2(client, UCTag, "%t", "Player Hard Respawned", target_name);
 	
 	return Plugin_Handled;
 }
 
 
 public Action:Command_Bury(client, args)
-{
+{	
 	if (args < 1)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_bury <#userid|name> [1/0]");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Target Toggle", arg0);
 		return Plugin_Handled;
 	}
 
@@ -2061,7 +2200,7 @@ public Action:Command_Bury(client, args)
 		arg2 = "1";
 		
 	new String:target_name[MAX_TARGET_LENGTH];
-	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
 
 	target_count = ProcessTargetString(
 					arg,
@@ -2088,33 +2227,45 @@ public Action:Command_Bury(client, args)
 		
 		if(bury)
 		{
-			if(IsPlayerStuck(target))
+			if(IsPlayerStuck(target) && target_count == 1)
 			{
-				ReplyToCommand(client, "%N is already buried!", target);
-				continue;
+				UC_ReplyToCommand(client, "%s%t", UCTag, "Already Buried", target);
+				return Plugin_Handled;
 			}	
 			UC_BuryPlayer(target);
-			ShowActivity2(client, "[SM] ", "buried %N.", target); 
 		}
 		else
 		{
 			if(!IsPlayerStuck(target))
 			{
-				ReplyToCommand(client, "%N is not buried!", target);
+				if(target_count == 1)
+				{
+					UC_ReplyToCommand(client, "%s%t", UCTag, "Already Not Buried", target);
+					return Plugin_Handled;
+				}
+				
 				continue;
 			}
-			ShowActivity2(client, "[SM] ", "unburied %N.", target); 
 			UC_UnburyPlayer(target);
 		}
 	}
+	
+	if(bury)
+		UC_ShowActivity2(client, UCTag, "%t", "Player Buried", target_name);
+		
+	else
+		UC_ShowActivity2(client, UCTag, "%t", "Player Unburied", target_name);
+		
 	return Plugin_Handled;
 }
 
 public Action:Command_Unbury(client, args)
-{
+{	
 	if (args < 1)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_unbury <#userid|name>");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Target", arg0);
 		return Plugin_Handled;
 	}
 
@@ -2122,7 +2273,7 @@ public Action:Command_Unbury(client, args)
 	GetCmdArg(1, arg, sizeof(arg));
 		
 	new String:target_name[MAX_TARGET_LENGTH];
-	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
 
 	target_count = ProcessTargetString(
 					arg,
@@ -2147,19 +2298,27 @@ public Action:Command_Unbury(client, args)
 		
 		if(!IsPlayerStuck(target))
 		{
-			ReplyToCommand(client, "%N is not buried!", target);
+			if(target_count == 1)
+			{
+				UC_ReplyToCommand(client, "%s%t", UCTag, "Already Not Buried", target);
+				return Plugin_Handled;
+			}
+			
 			continue;
 		}
-		ShowActivity2(client, "[SM] ", "unburied %N.", target); 
 		UC_UnburyPlayer(target);
 	}
+	
+	UC_ShowActivity2(client, UCTag, "%t", "Player Unburied", target_name);
 	return Plugin_Handled;
 }
 public Action:Command_UberSlap(client, args)
 {
 	if (args < 1)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_uberslap <#userid|name> [1/0]");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Target Toggle", arg0);
 		return Plugin_Handled;
 	}
 
@@ -2171,7 +2330,7 @@ public Action:Command_UberSlap(client, args)
 		arg2 = "1";
 		
 	new String:target_name[MAX_TARGET_LENGTH];
-	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
 
 	target_count = ProcessTargetString(
 					arg,
@@ -2200,7 +2359,12 @@ public Action:Command_UberSlap(client, args)
 		{
 			if(UberSlapped[target])
 			{
-				ReplyToCommand(client, "%N is already being uberslapped. Use sm_uberslap <target> 0 to stop uberslap.", target);
+				if(target_count == 1)
+				{
+					UC_ReplyToCommand(client, "%s%t", UCTag, "Player Already Uberslapped", target);
+					return Plugin_Handled;
+				}
+				
 				continue;
 			}
 			UberSlapped[target] = true;
@@ -2208,14 +2372,17 @@ public Action:Command_UberSlap(client, args)
 			
 			TeleportEntity(target, NULL_VECTOR, NULL_VECTOR, Float:{0.0, 0.0, 10.0});
 			TriggerTimer(TIMER_UBERSLAP[target] = CreateTimer(0.1, Timer_UberSlap, GetClientUserId(target), TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE), true);
-			
-			ShowActivity2(client, "[SM] ", "uberslapping %N", target);
 		}
 		else
 		{
 			if(!UberSlapped[target])
 			{
-				ReplyToCommand(client, "%N is not being uberslapped.", target);
+				if(target_count == 1)
+				{
+					UC_ReplyToCommand(client, "%s%t", UCTag, "Player Already Not Uberslapped", target);
+					return Plugin_Handled;
+				}
+				
 				continue;
 			}
 			UberSlapped[target] = false;
@@ -2224,9 +2391,13 @@ public Action:Command_UberSlap(client, args)
 				CloseHandle(TIMER_UBERSLAP[target]);
 				TIMER_UBERSLAP[target] = INVALID_HANDLE;
 			}
-			
-			ShowActivity2(client, "[SM] ", "stopped uberslap on %N.", target); 
 		}
+		
+		if(slap)
+			UC_ShowActivity2(client, UCTag, "%t", "Player Uberslapped", target_name);
+			
+		else
+			UC_ShowActivity2(client, UCTag, "%t", "Player Stop Uberslap", target_name);
 	}
 	return Plugin_Handled;
 }
@@ -2250,7 +2421,7 @@ public Action:Timer_UberSlap(Handle:hTimer, UserId)
 	{
 		UberSlapped[client] = false;
 		TIMER_UBERSLAP[client] = INVALID_HANDLE;
-		PrintToChat(client, "[SM] Uberslap has ended. Prepare your landing!");
+		UC_PrintToChat(client, "%s\x02Uberslap has ended.\x04 Prepare your landing!", UCTag);
 		return Plugin_Stop;
 	}
 
@@ -2260,10 +2431,10 @@ public Action:Timer_UberSlap(Handle:hTimer, UserId)
 
 public Action:Command_Heal(client, args)
 {
-	if (args < 2)
+	if (args < 1)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_heal <#userid|name> [health] [vest] [helmet:1/0]");
-		ReplyToCommand(client, "[SM] Note: Use \"max\" to fully heal. Use letters to ignore values.");
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Heal");
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Note Heal");
 		return Plugin_Handled;
 	}
 
@@ -2275,7 +2446,7 @@ public Action:Command_Heal(client, args)
 	StripQuotes(arg2);
 		
 	new String:target_name[MAX_TARGET_LENGTH];
-	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
 
 	target_count = ProcessTargetString(
 					arg,
@@ -2293,15 +2464,18 @@ public Action:Command_Heal(client, args)
 		ReplyToTargetError(client, target_count);
 		return Plugin_Handled;
 	}
-	
+
+	if(args == 1)
+		arg2 = "max";
+		
 	new health = UC_IsStringNumber(arg2) ? StringToInt(arg2) : -1;
-	
+
 	if(health > MAX_POSSIBLE_HP)
 		health = MAX_POSSIBLE_HP;
 		
 	new armor = UC_IsStringNumber(arg3) ? StringToInt(arg3) : -1;
 	
-	if(armor > 255)
+	if(armor > 255 || StrEqual(arg3, "max"))
 		armor = 255;
 		
 	new helmet = UC_IsStringNumber(arg4) ? StringToInt(arg4) : -1;
@@ -2319,29 +2493,29 @@ public Action:Command_Heal(client, args)
 		if(StrEqual(arg2, "max"))
 			health = GetEntProp(target, Prop_Data, "m_iMaxHealth");
 		
-		Format(ActivityBuffer, sizeof(ActivityBuffer), "set %N's", target);
+		Format(ActivityBuffer, sizeof(ActivityBuffer), "%t", "Heal Admin Set", target);
+		
 		if(health != -1)
 		{
 			SetEntityHealth(target, health);
-			Format(ActivityBuffer, sizeof(ActivityBuffer), "%s health to %i, ", ActivityBuffer, health);
+			Format(ActivityBuffer, sizeof(ActivityBuffer), "%s%t", ActivityBuffer, "Heal Admin Set Health", health);
 		}
 		if(armor != -1)
 		{
 			SetClientArmor(target, armor);
-			
-			Format(ActivityBuffer, sizeof(ActivityBuffer), "%s armor to %i, ", ActivityBuffer, armor);
+			Format(ActivityBuffer, sizeof(ActivityBuffer), "%s%t", ActivityBuffer, "Heal Admin Set Armor", armor);
 		}
 		if(helmet != -1)
 		{
 			SetClientHelmet(target, bHelmet);
 			
-			Format(ActivityBuffer, sizeof(ActivityBuffer), "%s helmet to %i, ", ActivityBuffer, helmet);
+			Format(ActivityBuffer, sizeof(ActivityBuffer), "%s%t", ActivityBuffer, "Heal Admin Set Helmet", helmet);
 		}
 		
 		new length = strlen(ActivityBuffer);
 		ActivityBuffer[length-2] = '.';
 		ActivityBuffer[length-1] = EOS;
-		ShowActivity2(client, "[SM] ", ActivityBuffer); 
+		UC_ShowActivity2(client, UCTag, ActivityBuffer); 
 	}
 	return Plugin_Handled;
 }
@@ -2350,7 +2524,9 @@ public Action:Command_Give(client, args)
 {
 	if (args < 2)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_give <#userid|name> <weapon_knife>");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Give", arg0);
 		return Plugin_Handled;
 	}
 
@@ -2360,7 +2536,7 @@ public Action:Command_Give(client, args)
 	
 	
 	new String:target_name[MAX_TARGET_LENGTH];
-	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
 
 	target_count = ProcessTargetString(
 					arg,
@@ -2436,7 +2612,7 @@ public Action:Command_Give(client, args)
 		}
 		else if((weapon = GivePlayerItem(target, arg2)) == -1)
 		{
-			ReplyToCommand(client, "[SM] Weapon %s does not exist.", WeaponName);
+			UC_ReplyToCommand(client, "%s%t", UCTag, "Command Give Invalid Weapon", WeaponName);
 			
 			RemovePlayerItem(target, weapon);
 			
@@ -2460,9 +2636,10 @@ public Action:Command_Give(client, args)
 		AcceptEntityInput(weapon, "Kill");
 		
 		weapon = -1;
-		ShowActivity2(client, "[SM] ", "gave weapon %s to %N.", WeaponName, target); 
 		
 	}
+	
+	UC_ShowActivity2(client, UCTag, "%t", "Player Given Weapon", WeaponName, target_name); 
 
 	return Plugin_Handled;
 }
@@ -2493,9 +2670,15 @@ public Action:Command_RestartRound(client, args)
 		
 		new String:strSecondsBeforeRestart[11];
 		IntToString(iSecondsBeforeRestart, strSecondsBeforeRestart, sizeof(strSecondsBeforeRestart));
-		Format(Arg, sizeof(Arg), "second%s", iSecondsBeforeRestart == 1 ? "" : "s");
+		
+		if(iSecondsBeforeRestart == 1)
+			Format(Arg, sizeof(Arg), "%t", "Second");
+			
+		else 
+			Format(Arg, sizeof(Arg), "%t", "Seconds");
+			
 		UC_PrintCenterTextAll("#SFUI_Notice_Game_will_restart_in", strSecondsBeforeRestart, Arg);
-		PrintToChatAll(" \x01Admin\x03 %N\x01 will\x04 restart\x01 the round in\x05 %i\x01 %s!", client, iSecondsBeforeRestart, Arg);
+		UC_PrintToChatAll("%s%t", UCTag, "Admin Restart Round", client, iSecondsBeforeRestart, Arg);
 		hRRTimer = CreateTimer(SecondsBeforeRestart, RestartRound, _, TIMER_FLAG_NO_MAPCHANGE);
 	}
 	else
@@ -2505,7 +2688,7 @@ public Action:Command_RestartRound(client, args)
 			CloseHandle(hRRTimer);
 			hRRTimer = INVALID_HANDLE;
 		}
-		PrintToChatAll(" \x01Admin\x03 %N\x01 stopped the\x04 round restart\x01!", client);
+		UC_PrintToChatAll("%s%t", UCTag, "Admin Stopped Restart Round", client);
 	}
 	return Plugin_Handled;
 }
@@ -2520,10 +2703,11 @@ public Action:RestartRound(Handle:hTimer)
 public Action:Command_RestartGame(client, args)
 {
 	new SecondsBeforeRestart;
+	new String:Arg[11];
+	GetCmdArg(1, Arg, sizeof(Arg));
+	
 	if(args > 0)
 	{
-		new String:Arg[11];
-		GetCmdArg(1, Arg, sizeof(Arg));
 	
 		SecondsBeforeRestart = StringToInt(Arg);
 	}
@@ -2534,8 +2718,15 @@ public Action:Command_RestartGame(client, args)
 	
 	
 	if(SecondsBeforeRestart != 0)
-		PrintToChatAll(" \x01Admin\x03 %N\x01 will\x04 restart\x01 the game in\x05 %i\x01 second%s!", client, SecondsBeforeRestart, SecondsBeforeRestart == 1 ? "" : "s");
-		
+	{
+		if(SecondsBeforeRestart == 1)
+			Format(Arg, sizeof(Arg), "%t", "Second");
+			
+		else 
+			Format(Arg, sizeof(Arg), "%t", "Seconds");
+			
+		UC_PrintToChatAll("%s%t", UCTag, "Admin Restart Game", client, SecondsBeforeRestart, Arg);
+	}	
 	else
 	{
 		if(isCSGO())
@@ -2543,7 +2734,7 @@ public Action:Command_RestartGame(client, args)
 			GameRules_SetProp("m_bGameRestart", 0);
 			GameRules_SetPropFloat("m_flRestartRoundTime", 0.0);
 		}	
-		PrintToChatAll(" \x01Admin\x03 %N\x01 stopped the\x04 game restart\x01!", client);
+		UC_PrintToChatAll("%s%t", UCTag, "Admin Stopped Restart Game", client);
 	}
 	return Plugin_Handled;
 }
@@ -2552,8 +2743,15 @@ public Action:Command_RestartServer(client, args)
 {
 	if(!Restart)
 	{
+		new String:Arg[15];
 		hRestartTimer = CreateTimer(5.0, RestartServer, _, TIMER_FLAG_NO_MAPCHANGE);
-		PrintToChatAll(" \x01Admin\x03 %N\x01 will \x04restart\x01 server in 5 seconds!", client);
+		//if(iSecondsBeforeRestart == 1)
+			//Format(Arg, sizeof(Arg), "%t", "Second");
+			
+		//else 
+		Format(Arg, sizeof(Arg), "%t", "Seconds");
+			
+		UC_PrintToChatAll("%s%t", UCTag, "Admin Restart Server", client, 5, Arg);
 	}
 	else
 	{
@@ -2562,7 +2760,8 @@ public Action:Command_RestartServer(client, args)
 			CloseHandle(hRestartTimer);
 			hRestartTimer = INVALID_HANDLE;
 		}
-		PrintToChatAll(" \x01Admin\x03 %N\x01 has \x04stopped\x01 the server restart!", client);
+		
+		UC_PrintToChatAll("%s%t", UCTag, "Admin Stopped Restart Server", client);
 	}
 	Restart = !Restart;
 	
@@ -2581,7 +2780,10 @@ public Action:Command_Glow(client, args)
 {
 	if (args < 1)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_glow <#userid|name> [color/off]");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Glow", arg0);
 		return Plugin_Handled;
 	}
 	new String:arg[65], String:arg2[50];
@@ -2590,7 +2792,7 @@ public Action:Command_Glow(client, args)
 
 	if(StrEqual(arg2, "color", false) || StrEqual(arg2, "colors", false))
 	{
-		ReplyToCommand(client, "[SM] Check your console for a list of valid colors.");
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Glow List");
 		
 		for(new i=0;i < sizeof(GlowData);i++)
 		{
@@ -2627,14 +2829,14 @@ public Action:Command_Glow(client, args)
 			}
 			else if(i == sizeof(GlowData)-1)
 			{
-				ReplyToCommand(client, "[SM] Glow color is invalid.");
+				UC_ReplyToCommand(client, "%s%t", UCTag, "Command Glow Invalid");
 				return Plugin_Handled;
 			}
 		}
 	}
 		
 	new String:target_name[MAX_TARGET_LENGTH];
-	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
 
 	target_count = ProcessTargetString(
 					arg,
@@ -2662,29 +2864,29 @@ public Action:Command_Glow(client, args)
 			UC_TryDestroyGlow(target);
 			
 
-			if(!UC_CreateGlow(target, Color))
+			if(!UC_CreateGlow(target, Color) && target_count == 1)
 			{
-				ReplyToCommand(client, "[SM] Couldn't create glow on %N", target);
-				continue;
+				UC_ReplyToCommand(client, "%s%t", UCTag, "Command Glow Failed to Give");
+				return Plugin_Handled;
 			}
-			
-			ShowActivity2(client, "[SM] ", "enabled glow on %N.", target); 
 		}
 		else
 		{
-			if(ClientGlow[target] == 0)
+			if(!UC_TryDestroyGlow(target) && target_count == 1)
 			{
-				ReplyToCommand(client, "%N doesn't have glow.", target);
-				continue;
+				UC_ReplyToCommand(client, "%s%t", UCTag, "Command Glow Failed to Remove", target);
+				return Plugin_Handled;
 			}	
-			
-			UC_TryDestroyGlow(target);
-			
-			ShowActivity2(client, "[SM] ", "disabled glow on %N.", target); 
-			
 		}
-		
 	}
+	
+	
+	if(glow)
+		UC_ShowActivity2(client, UCTag, "%t", "Player Given Glow", target_name); 
+		
+	else
+		UC_ShowActivity2(client, UCTag, "%t", "Player Removed Glow", target_name); 
+		
 	return Plugin_Handled;
 }
 
@@ -2692,7 +2894,10 @@ public Action:Command_Blink(client, args)
 {
 	if (args < 1)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_blink <#userid|name>");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Target", arg0);
 		return Plugin_Handled;
 	}
 
@@ -2700,7 +2905,7 @@ public Action:Command_Blink(client, args)
 	GetCmdArg(1, arg, sizeof(arg));
 
 	new String:target_name[MAX_TARGET_LENGTH];
-	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
 
 	target_count = ProcessTargetString(
 					arg,
@@ -2727,9 +2932,9 @@ public Action:Command_Blink(client, args)
 		UC_GetAimPositionBySize(client, target, Origin);
 		
 		TeleportEntity(target, Origin, NULL_VECTOR, NULL_VECTOR);
-		
-		ShowActivity2(client, "[SM] ", "teleported %N to aim position.", target); 
 	}
+	
+	UC_ShowActivity2(client, UCTag, "%t", "Player Blinked", target_name); 
 	
 	return Plugin_Handled;
 }
@@ -2738,7 +2943,10 @@ public Action:Command_Godmode(client, args)
 {
 	if (args < 1)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_god <#userid|name> [1/0]");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Target Toggle", arg0);
 		return Plugin_Handled;
 	}
 
@@ -2750,7 +2958,7 @@ public Action:Command_Godmode(client, args)
 		arg2 = "1";
 		
 	new String:target_name[MAX_TARGET_LENGTH];
-	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
 
 	target_count = ProcessTargetString(
 					arg,
@@ -2777,28 +2985,32 @@ public Action:Command_Godmode(client, args)
 		
 		if(god)
 		{
-			if(UC_GetClientGodmode(target))
+			if(UC_GetClientGodmode(target) && target_count == 1)
 			{
-				ReplyToCommand(client, "%N is already godmode. Use !god <target> 0 to disable.", target);
-				continue;
+				UC_ReplyToCommand(client, "%s%t", UCTag, "Already Godmode", target);
+				return Plugin_Handled;
 			}
 
 			UC_SetClientGodmode(target, true);
-			
-			ShowActivity2(client, "[SM] ", "enabled godmode on %N.", target); 
 		}
 		else
 		{
-			if(!UC_GetClientGodmode(target))
+			if(!UC_GetClientGodmode(target) && target_count == 1)
 			{
-				ReplyToCommand(client, "%N is not godmode.", target);
-				continue;
+				UC_ReplyToCommand(client, "%s%t", UCTag, "Already Not Godmode", target);
+				return Plugin_Handled;
 			}
 			
 			UC_SetClientGodmode(target, false);
-			ShowActivity2(client, "[SM] ", "disabled godmode on %N.", target); 
 		}
 	}
+	
+	if(god)
+		UC_ShowActivity2(client, UCTag, "%t", "Player Given Godmode", target_name);
+		
+	else
+		UC_ShowActivity2(client, UCTag, "%t", "Player Removed Godmode", target_name);
+		
 	return Plugin_Handled;
 }
 
@@ -2806,7 +3018,10 @@ public Action:Command_Rocket(client, args)
 {
 	if (args < 1)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_rocket <#userid|name> [1/0]");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Target Toggle", arg0);
 		return Plugin_Handled;
 	}
 
@@ -2817,7 +3032,7 @@ public Action:Command_Rocket(client, args)
 	if(StrEqual(arg2, ""))
 		arg2 = "1";
 	new String:target_name[MAX_TARGET_LENGTH];
-	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
 
 	target_count = ProcessTargetString(
 					arg,
@@ -2842,11 +3057,15 @@ public Action:Command_Rocket(client, args)
 	{
 		new target = target_list[i];
 		
-		ShowActivity2(client, "[SM] ", "Set rocket on %N.", target); 
-		
 		UC_SetClientRocket(target, rocket);
 	}
 	
+	if(rocket)
+		UC_ShowActivity2(client, UCTag, "%t", "Player Given Rocket", target_name); 
+	
+	else 
+		UC_ShowActivity2(client, UCTag, "%t", "Player Removed Rocket", target_name);
+		
 	return Plugin_Handled;
 }
 
@@ -2855,7 +3074,10 @@ public Action:Command_Disarm(client, args)
 {
 	if (args < 1)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_disarm <#userid|name>");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Target", arg0);
 		return Plugin_Handled;
 	}
 
@@ -2863,7 +3085,7 @@ public Action:Command_Disarm(client, args)
 	GetCmdArg(1, arg, sizeof(arg));
 
 	new String:target_name[MAX_TARGET_LENGTH];
-	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
 
 	target_count = ProcessTargetString(
 					arg,
@@ -2886,49 +3108,22 @@ public Action:Command_Disarm(client, args)
 	{
 		new target = target_list[i];
 		
-		ShowActivity2(client, "[SM] ", "stripped %N's weapons.", target); 
-		
 		UC_StripPlayerWeapons(target);
 	}
 	
-	return Plugin_Handled;
-}
-
-
-/*
-public Action:Command_Cheat(client, args)
-{
-	if (args < 1)
-	{
-		ReplyToCommand(client, "[SM] Usage: sm_cheat <command>");
-		return Plugin_Handled;
-	}
-
-	new String:arg[100];
-	GetCmdArgString(arg, sizeof(arg));
-	StripQuotes(arg);
-
-	UC_CheatCommand(client, arg);
+	UC_ShowActivity2(client, UCTag, "%t", "Player Stripped", target_name);
 	
 	return Plugin_Handled;
 }
-*/
-public Action:Command_Last(client, args)
-{
-	if(dbLocal == INVALID_HANDLE)
-		return Plugin_Handled;
-		
-	SQL_TQuery(dbLocal, SQLCB_LastConnected, "SELECT * FROM UsefulCommands_LastPlayers ORDER BY LastConnect DESC", GetClientUserId(client)); 
-	
-	return Plugin_Handled;
-}
-
 
 public Action:Command_Exec(client, args)
 {
 	if (args < 2)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_exec <#userid|name> <command>");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Execute", arg0);
 		return Plugin_Handled;
 	}
 
@@ -2938,7 +3133,7 @@ public Action:Command_Exec(client, args)
 	StripQuotes(ExecCommand);
 	
 	new String:target_name[MAX_TARGET_LENGTH];
-	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
 	
 	target_count = ProcessTargetString(
 					arg,
@@ -2963,12 +3158,12 @@ public Action:Command_Exec(client, args)
 	for(new i=0;i < target_count;i++)
 	{
 		new target = target_list[i];
-		
-		ShowActivity2(client, "[SM] ", "Executed \"%s\" on %N.", ExecCommand, target); 
-		LogAction(client, target, "\"%L\" executed \"%s\" on \"%N\"", client, ExecCommand, target);
 
 		ClientCommand(target, ExecCommand);
 	}
+	
+	UC_ShowActivity2(client, UCTag, "%t", "Player Executed", ExecCommand, target_name);
+	LogAction(client, -1, "\"%L\" executed \"%s\" on \"%s\"", client, ExecCommand, target_name);
 	
 	return Plugin_Handled;
 }
@@ -2978,7 +3173,10 @@ public Action:Command_FakeExec(client, args)
 {
 	if (args < 2)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_fakeexec <#userid|name> <command>");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Execute", arg0);
 		return Plugin_Handled;
 	}
 
@@ -2988,7 +3186,7 @@ public Action:Command_FakeExec(client, args)
 	StripQuotes(ExecCommand);
 	
 	new String:target_name[MAX_TARGET_LENGTH];
-	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
 	
 	target_count = ProcessTargetString(
 					arg,
@@ -3014,11 +3212,11 @@ public Action:Command_FakeExec(client, args)
 	{
 		new target = target_list[i];
 		
-		ShowActivity2(client, "[SM] ", "Executed \"%s\" on %N.", ExecCommand, target); 
-		LogAction(client, target, "\"%L\" executed \"%s\" on \"%N\"", client, ExecCommand, target);
-		
 		FakeClientCommand(target, ExecCommand);
 	}
+	
+	UC_ShowActivity2(client, UCTag, "%t", "Player Executed", ExecCommand, target_name);
+	LogAction(client, -1, "\"%L\" executed \"%s\" on \"%s\"", client, ExecCommand, target_name);
 	
 	return Plugin_Handled;
 }
@@ -3027,7 +3225,10 @@ public Action:Command_BruteExec(client, args)
 {
 	if (args < 2)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_bruteexec <#userid|name> <command>");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Execute", arg0);
 		return Plugin_Handled;
 	}
 
@@ -3037,7 +3238,7 @@ public Action:Command_BruteExec(client, args)
 	StripQuotes(ExecCommand);
 	
 	new String:target_name[MAX_TARGET_LENGTH];
-	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
 	
 	target_count = ProcessTargetString(
 					arg,
@@ -3068,15 +3269,15 @@ public Action:Command_BruteExec(client, args)
 	{
 		new target = target_list[i];
 		
-		ShowActivity2(client, "[SM] ", "Brutally Executed \"%s\" on %N.", ExecCommand, target); 
-		LogAction(client, target, "\"%L\" Brutally Executed \"%s\" on \"%N\"", client, ExecCommand, target);
-		
 		new bits = GetUserFlagBits(target);
 		
 		SetUserFlagBits(target, bitsToGive);
 		FakeClientCommand(target, ExecCommand);
 		SetUserFlagBits(target, bits);
 	}
+	
+	UC_ShowActivity2(client, UCTag, "%t", "Player Brutally Executed", ExecCommand, target_name);
+	LogAction(client, -1, "\"%L\" BRUTALLY executed \"%s\" on \"%s\"", client, ExecCommand, target_name);
 	
 	return Plugin_Handled;
 }
@@ -3086,7 +3287,10 @@ public Action:Command_Money(client, args)
 {
 	if (args < 2)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_money <#userid|name> <amount>");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Amount", arg0);
 		return Plugin_Handled;
 	}
 
@@ -3095,7 +3299,7 @@ public Action:Command_Money(client, args)
 	GetCmdArg(2, arg2, sizeof(arg2));
 	
 	new String:target_name[MAX_TARGET_LENGTH];
-	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
 	
 	target_count = ProcessTargetString(
 					arg,
@@ -3122,11 +3326,10 @@ public Action:Command_Money(client, args)
 	{
 		new target = target_list[i];
 		
-		ShowActivity2(client, "[SM] ", "Set \"%N\"s money to %i.", target, money); 
-		
 		SetEntProp(target, Prop_Send, "m_iAccount", money);
 	}
 	
+	UC_ShowActivity2(client, UCTag, "%t", "Player Set Money", target_name, money);
 	return Plugin_Handled;
 }
 
@@ -3135,7 +3338,10 @@ public Action:Command_Team(client, args)
 {
 	if (args < 2)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_team <#userid|name> <CT/T/Spec>");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Team", arg0);
 		return Plugin_Handled;
 	}
 
@@ -3144,7 +3350,7 @@ public Action:Command_Team(client, args)
 	GetCmdArg(2, arg2, sizeof(arg2));
 	
 	new String:target_name[MAX_TARGET_LENGTH];
-	new target_list[MaxClients], target_count, bool:tn_is_ml;
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
 	
 	target_count = ProcessTargetString(
 					arg,
@@ -3169,7 +3375,10 @@ public Action:Command_Team(client, args)
 		
 		if(TeamToSet > CS_TEAM_CT || TeamToSet < CS_TEAM_SPECTATOR)
 		{
-			ReplyToCommand(client, "[SM] Usage: sm_team <#userid|name> <CT/T/Spec>");
+			new String:arg0[65];
+			GetCmdArg(0, arg0, sizeof(arg0));
+			
+			UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Team", arg0);
 			return Plugin_Handled;
 		}
 	}	
@@ -3186,7 +3395,10 @@ public Action:Command_Team(client, args)
 			
 		else
 		{
-			ReplyToCommand(client, "[SM] Usage: sm_team <#userid|name> <CT/T/Spec>");
+			new String:arg0[65];
+			GetCmdArg(0, arg0, sizeof(arg0));
+			
+			UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Team", arg0);
 			return Plugin_Handled;
 		}
 	}
@@ -3206,8 +3418,6 @@ public Action:Command_Team(client, args)
 	{
 		new target = target_list[i];
 		
-		ShowActivity2(client, "[SM] ", "Set \"%N\"s team to %s.", target, TeamName); 
-		
 		if(TeamToSet == CS_TEAM_SPECTATOR)
 		{
 			UC_StripPlayerWeapons(target); // So he doesn't drop his weapon during the team swap.
@@ -3222,6 +3432,10 @@ public Action:Command_Team(client, args)
 				CS_RespawnPlayer(target);
 		}
 	}
+	
+			
+	
+	UC_ShowActivity2(client, UCTag, "%t", "Player Set Team", target_name, TeamName);
 	
 	return Plugin_Handled;
 }
@@ -3251,7 +3465,7 @@ public Action:Command_UCEdit(client, args)
 		if(UCEdit[client])
 		{
 			SetEntProp(Chicken, Prop_Send, "m_bShouldGlow", true, true);
-			SetEntProp(Chicken, Prop_Send, "m_nGlowStyle", GLOW_FULLBODY);
+			SetEntProp(Chicken, Prop_Send, "m_nGlowStyle", GLOW_WALLHACK);
 			SetEntPropFloat(Chicken, Prop_Send, "m_flGlowMaxDist", 10000.0);
 			SetEntityMoveType(Chicken, MOVETYPE_NONE);
 		}
@@ -3266,10 +3480,13 @@ public Action:Command_UCEdit(client, args)
 		SetVariantColor(VariantColor);
 		AcceptEntityInput(Chicken, "SetGlowColor");
 	}
-	PrintToChat(client, " \x01You have\x05 %sabled\x01 the UC editor.", UCEdit[client] ? "En" : "Dis");
-	
 	if(UCEdit[client])
-		PrintToChat(client, " \x01UC Editor will make all chickens glow and deleting will teleport you to the location.");
+	{
+		UC_PrintToChat(client, "%s%t", UCTag, "Command UCEdit Enabled");
+		UC_PrintToChat(client, "%s%t", UCTag, "Command UCEdit Info");
+	}	
+	else
+		UC_PrintToChat(client, "%s%t", UCTag, "Command UCEdit Disabled");
 		
 	Command_Chicken(client, 0);
 	
@@ -3283,13 +3500,19 @@ public Action:Command_Chicken(client, args)
 		
 	new Handle:hMenu = CreateMenu(ChickenMenu_Handler);
 	
-	AddMenuItem(hMenu, "", "Create Chicken Spawner");	
-	AddMenuItem(hMenu, "", "Delete Chicken Spawner");
+	new String:TempFormat[64];
+	Format(TempFormat, sizeof(TempFormat), "%t", "Menu Chicken Create");
+	AddMenuItem(hMenu, "", TempFormat);
+	
+	Format(TempFormat, sizeof(TempFormat), "%t", "Menu Chicken Delete");
+	AddMenuItem(hMenu, "", TempFormat);
 	
 	if(UCEdit[client])
-		AddMenuItem(hMenu, "", "Delete Spawner On Aim");
-	
-	SetMenuTitle(hMenu, "Create at 64 units distance from each other and walls");
+	{
+		Format(TempFormat, sizeof(TempFormat), "%t", "Menu Chicken Delete Aim");
+		AddMenuItem(hMenu, "", TempFormat);
+	}
+	SetMenuTitle(hMenu, "%t", "Menu Chicken Title");
 	DisplayMenu(hMenu, client, MENU_TIME_FOREVER);
 	
 	return Plugin_Handled;
@@ -3325,7 +3548,7 @@ public ChickenMenu_Handler(Handle:hMenu, MenuAction:action, client, item)
 				
 				if(Chicken == -1)
 				{
-					PrintToChat(client, "\x01 Could not find a chicken spawner at aim.");
+					UC_PrintToChat(client, "%s%t", UCTag, "Command Chicken Not Found");
 					return;
 				}
 				
@@ -3334,7 +3557,7 @@ public ChickenMenu_Handler(Handle:hMenu, MenuAction:action, client, item)
 				
 				if(!StrEqual(Classname, "Chicken", false))
 				{
-					PrintToChat(client, "\x01 Could not find a chicken spawner at aim.");
+					UC_PrintToChat(client, "%s%t", UCTag, "Command Chicken Not Found");
 					return;
 				}
 				
@@ -3343,7 +3566,7 @@ public ChickenMenu_Handler(Handle:hMenu, MenuAction:action, client, item)
 				
 				if(StrContains(TargetName, "UsefulCommands_Chickens") == -1)
 				{
-					PrintToChat(client, "\x01 Could not find a chicken spawner at aim.");
+					UC_PrintToChat(client, "%s%t", UCTag, "Command Chicken Not Found");
 					return;
 				}
 				
@@ -3351,7 +3574,7 @@ public ChickenMenu_Handler(Handle:hMenu, MenuAction:action, client, item)
 				
 				new String:sQuery[256];
 				
-				PrintToChat(client, TargetName);
+				UC_PrintToChat(client, TargetName);
 				Format(sQuery, sizeof(sQuery), "DELETE FROM UsefulCommands_Chickens WHERE ChickenOrigin = \"%s\" AND ChickenMap = \"%s\"", TargetName, MapName);
 				SQL_TQuery(dbLocal, SQLCB_Error, sQuery);
 				
@@ -3384,7 +3607,7 @@ public SQLCB_DeleteChickenSpawnMenu(Handle:db, Handle:hndl, const String:sError[
 	
 	else if(SQL_GetRowCount(hndl) == 0)
 	{
-		PrintToChat(client, " \x01This map doesn't have chicken spawners.");
+		UC_PrintToChat(client, "%s%t", UCTag, "Command Chicken No Spawners");
 		return;
 	}
 	
@@ -3398,7 +3621,7 @@ public SQLCB_DeleteChickenSpawnMenu(Handle:db, Handle:hndl, const String:sError[
 		AddMenuItem(hMenu, "", sOrigin);
 	}
 	
-	SetMenuTitle(hMenu, "Write !ucedit if server is empty for advanced features.");
+	SetMenuTitle(hMenu, "%t", "Menu Chicken Delete Info");
 	
 	SetMenuExitBackButton(hMenu, true);
 	DisplayMenu(hMenu, client, MENU_TIME_FOREVER);
@@ -3434,10 +3657,15 @@ CreateConfirmDeleteMenu(client, String:sOrigin[])
 {
 	new Handle:hMenu = CreateMenu(ConfirmDeleteChickenSpawnMenu_Handler);
 	
-	AddMenuItem(hMenu, sOrigin, "Yes");
-	AddMenuItem(hMenu, sOrigin, "No");
+	new String:TempFormat[128];
 	
-	SetMenuTitle(hMenu, "Are you sure you wanna delete spawner at %s?", sOrigin);
+	Format(TempFormat, sizeof(TempFormat), "%t", "Menu Yes");
+	AddMenuItem(hMenu, sOrigin, TempFormat);
+
+	Format(TempFormat, sizeof(TempFormat), "%t", "Menu No");
+	AddMenuItem(hMenu, sOrigin, TempFormat);
+	
+	SetMenuTitle(hMenu, "%t", "Menu Chicken Delete Confirm", sOrigin);
 
 	SetMenuExitBackButton(hMenu, true);
 	
@@ -3491,7 +3719,7 @@ public SQLCB_ChickenSpawnDeleted(Handle:db, Handle:hndl, const String:sError[], 
 	new client = GetClientOfUserId(data);
 	
 	if(client != 0)
-		PrintToChat(client, " \x01Chicken Spawner was successfully deleted!");
+		UC_PrintToChat(client, "%s%t", UCTag, "Command Chicken Deleted");
 		
 	LoadChickenSpawns();
 }
@@ -3534,7 +3762,7 @@ public SQLCB_ChickenSpawnCreated(Handle:db, Handle:hndl, const String:sError[], 
 		ThrowError(sError);
 	
 	else if(client != 0)
-		PrintToChat(client, " \x01Chicken spawn point was created on your position.");
+		UC_PrintToChat(client, "%s%t", UCTag, "Command Chicken Created");
 	
 	new String:sOrigin[50];
 	Format(sOrigin, sizeof(sOrigin), "%.4f %.4f %.4f", Origin[0], Origin[1], Origin[2]);
@@ -3545,6 +3773,16 @@ public SQLCB_ChickenSpawnCreated(Handle:db, Handle:hndl, const String:sError[], 
 CreateChickenSpawner(String:sOrigin[])
 {
 	PushArrayString(ChickenOriginArray, sOrigin);
+}
+
+public Action:Command_Last(client, args)
+{
+	if(dbLocal == INVALID_HANDLE)
+		return Plugin_Handled;
+		
+	SQL_TQuery(dbLocal, SQLCB_LastConnected, "SELECT * FROM UsefulCommands_LastPlayers ORDER BY LastConnect DESC", GetClientUserId(client)); 
+	
+	return Plugin_Handled;
 }
 
 public SQLCB_LastConnected(Handle:db, Handle:hndl, const String:sError[], data)
@@ -3596,14 +3834,15 @@ public LastConnected_MenuHandler(Handle:hMenu, MenuAction:action, client, item)
 		
 		LastConnect = StringToInt(Date);
 
-		if(!CheckCommandAccess(client, "sm_checkcommandaccess_root", UC_ADMFLAG_SHOWIP))
-			IPAddress = "Invalid admin access";
-			
+		if(!CheckCommandAccess(client, "sm_uc_last_showip", ADMFLAG_ROOT))
+		{
+			Format(IPAddress, sizeof(IPAddress), "%t", "No admin access");
+		}	
 		FormatTime(Date, sizeof(Date), "%d/%m/%Y - %H:%M:%S", LastConnect);
 		
-		PrintToChat(client, " \x01Name: \x03%s\x01, Steam ID:\x03 %s\x01,", Name, AuthId);
-		PrintToChat(client, " \x01IP Address:\x03 %s\x01, Last disconnect:\x03 %s", IPAddress, Date);
-		PrintToConsole(client, " \nName: %s | Steam ID: %s | IP Address: %s | Last disconnect:\x03, %s", Name, AuthId, IPAddress, Date);
+		UC_PrintToChat(client, "%s%t", UCTag, "Command Last Name SteamID", Name, AuthId);
+		UC_PrintToChat(client, "%s%t", UCTag, "Command Last IP Last Disconnect", IPAddress, Date);
+		PrintToConsole(client, "\n%t", "Command Last Console Full", Name, AuthId, IPAddress, Date);
 		
 		Command_Last(client, 0);
 	}
@@ -3615,7 +3854,7 @@ public Action:Command_Hug(client, args)
 {
 	if(!IsPlayerAlive(client))
 	{
-		ReplyToCommand(client, "[SM] This command can only be used by living players.");
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Error Alive");
 		return Plugin_Handled;
 	}
 	
@@ -3685,11 +3924,11 @@ public Action:Command_Hug(client, args)
 	
 	if(ClosestRagdoll == -1)
 	{
-		PrintToChat(client, "No dead players were found to hug.");
+		UC_PrintToChat(client, "%s%t", UCTag, "Command Hug Nobody Found");
 		return Plugin_Handled;
 	}
 	
-	PrintToChatAll(" \x03%N\x05 hugged\x03 %N\x01's\x04 dead body!", client, WinningPlayer); 
+	UC_PrintToChatAll("%s%t", UCTag, "Player Hugged", client, WinningPlayer);
 	isHugged[WinningPlayer] = true;
 	return Plugin_Handled;
 }
@@ -3699,7 +3938,7 @@ public Action:Command_XYZ(client, args)
 	new Float:Origin[3];
 	GetEntPropVector(client, Prop_Data, "m_vecOrigin", Origin);
 	
-	PrintToChat(client, "X, Y, Z = %.3f, %.3f, %3f", Origin[0], Origin[1], Origin[2]);
+	UC_PrintToChat(client, "X, Y, Z = %.3f, %.3f, %3f", Origin[0], Origin[1], Origin[2]);
 	
 	return Plugin_Handled;
 }
@@ -3710,7 +3949,10 @@ public Action:Command_SilentCvar(client, args)
 {
 	if(args < 1)
 	{
-		ReplyToCommand(client, "[SM] Usage: sm_silentcvar <cvar> [value]");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Silent Cvar", arg0);
 		return Plugin_Handled;
 	}
 
@@ -3721,7 +3963,7 @@ public Action:Command_SilentCvar(client, args)
 	
 	if(hndl == null)
 	{
-		ReplyToCommand(client, "[SM] %t", "Unable to find cvar", cvarname);
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Unable to find cvar", cvarname);
 		return Plugin_Handled;
 	}
 
@@ -3731,7 +3973,7 @@ public Action:Command_SilentCvar(client, args)
 	{
 		hndl.GetString(value, sizeof(value));
 
-		ReplyToCommand(client, "[SM] %t", "Value of cvar", cvarname, value);
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Value of cvar", cvarname, value);
 		return Plugin_Handled;
 	}
 
@@ -3747,9 +3989,9 @@ public Action:Command_SilentCvar(client, args)
 		}
 	}
 	
-	ReplyToCommand(client, "[SM] %t", "Cvar changed", cvarname, value);
+	UC_ReplyToCommand(client, "%s%t", UCTag, "Cvar changed", cvarname, value);
 
-	LogAction(client, -1, "\"%L\" changed cvar (cvar \"%s\") (value \"%s\")", client, cvarname, value);
+	LogAction(client, -1, "\"%L\" silently changed cvar (cvar \"%s\") (value \"%s\")", client, cvarname, value);
 
 	new flags = hndl.Flags;
 	
@@ -3774,14 +4016,18 @@ public Action:Command_CustomAce(client, args)
 	{
 		SetClientAceFunFact(client, "#funfact_ace");
 
-		PrintToChat(client, "Successfully set Ace fun fact to default message.");
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_PrintToChat(client, "%s%t", UCTag, "Command Usage Custom Ace", arg0);
+		UC_PrintToChat(client, "%s%t", UCTag, "Command Ace Message Set To Default");
 		return Plugin_Handled;		
 	}	
 	
 	SetClientAceFunFact(client, Args);
 
-	PrintToChat(client, "Successfully set Ace fun fact to %s", Args);
-	PrintToChat(client, "Hint: \"$name\" translates to your name, \"$team\" to your team, \"$opteam\" to your opponent team.");
+	UC_PrintToChat(client, "%s%t", UCTag, "Command Ace Message Set", Args);
+	UC_PrintToChat(client, "%s%t", UCTag, "Command Ace Message Hint");
 	
 	return Plugin_Handled;
 }
@@ -3815,13 +4061,12 @@ public Action:Command_WepStats(client, args)
 			
 		IntToString(view_as<int>(i), WeaponID, sizeof(WeaponID));
 		
+		UC_StringToUpper(Alias);
+		
 		AddMenuItem(hMenu, WeaponID, Alias);	
 	}
-	
-	if(UCEdit[client])
-		AddMenuItem(hMenu, "", "Delete Spawner On Aim");
-	
-	SetMenuTitle(hMenu, "Choose a weapon to get stats about:");
+
+	SetMenuTitle(hMenu, "%t", "Menu Wepstats Title");
 	DisplayMenu(hMenu, client, MENU_TIME_FOREVER);
 	
 	return Plugin_Handled;
@@ -3848,59 +4093,71 @@ public WepStatsMenu_Handler(Handle:hMenu, MenuAction:action, client, item)
 ShowSelectedWepStatMenu(client, CSWeaponID:i)
 {
 	new Handle:hMenu = CreateMenu(WepStatsSelectedMenu_Handler);
-		
+	
 	new String:TempFormat[150];
 	
 	new String:WeaponID[20];
 	
 	IntToString(view_as<int>(i), WeaponID, sizeof(WeaponID));
 	
-	Format(TempFormat, sizeof(TempFormat), "Base Damage: %i per shot", wepStatsList[i][wepStatsDamage]);
+	Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats Base Damage", wepStatsList[i][wepStatsDamage]);
 	AddMenuItem(hMenu, WeaponID, TempFormat);
 	
-	Format(TempFormat, sizeof(TempFormat), "Rate of Fire: %i RPM", wepStatsList[i][wepStatsFireRate]);
+	Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats Rate of Fire", wepStatsList[i][wepStatsFireRate]);
 	AddMenuItem(hMenu, "", TempFormat);
 	
-	Format(TempFormat, sizeof(TempFormat), "Armor Penetration: %.1f%%", wepStatsList[i][wepStatsArmorPenetration]);
+	Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats Armor Penetration", wepStatsList[i][wepStatsArmorPenetration]);
 	AddMenuItem(hMenu, "", TempFormat);
 	
-	Format(TempFormat, sizeof(TempFormat), "Kill Award: %i$", wepStatsList[i][wepStatsKillAward]);
+	Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats Kill Award", wepStatsList[i][wepStatsKillAward]);
 	AddMenuItem(hMenu, "", TempFormat);
 	
-	Format(TempFormat, sizeof(TempFormat), "Surface Penetration: %.2f*\n Note: To compare, AWP has %.2f ", wepStatsList[i][wepStatsWallPenetration], wepStatsList[CSWeapon_AWP][wepStatsWallPenetration]);
+	Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats Wallbang Power", wepStatsList[i][wepStatsWallPenetration], wepStatsList[CSWeapon_AWP][wepStatsWallPenetration]);
 	AddMenuItem(hMenu, "", TempFormat);
 	
-	Format(TempFormat, sizeof(TempFormat), "Damage Dropoff: %i%% per 500 units", wepStatsList[i][wepStatsDamageDropoff]);
+	Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats Damage Dropoff", wepStatsList[i][wepStatsDamageDropoff]);
 	AddMenuItem(hMenu, "", TempFormat);
 	
-	Format(TempFormat, sizeof(TempFormat), "Max Damage Range: %i units", wepStatsList[i][wepStatsMaxDamageRange]);
+	Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats Max Range", wepStatsList[i][wepStatsMaxDamageRange]);
 	AddMenuItem(hMenu, "", TempFormat);
 	
-	Format(TempFormat, sizeof(TempFormat), "Pallets Per Shot: %i", wepStatsList[i][wepStatsPalletsPerShot]);
+	Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats Pellets per Shot", wepStatsList[i][wepStatsPalletsPerShot]);
 	AddMenuItem(hMenu, "", TempFormat);
 	
-	Format(TempFormat, sizeof(TempFormat), "Fully Automatic: %s", wepStatsList[i][wepStatsIsAutomatic] ? "Yes" : "No");
+	Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats Damage per Pellet", wepStatsList[i][wepStatsDamagePerPallet]);
+	AddMenuItem(hMenu, "", TempFormat);
+	
+	new String:isFullAuto[15];
+	Format(isFullAuto, sizeof(isFullAuto), "%t", wepStatsList[i][wepStatsIsAutomatic] ? "Menu Yes" : "Menu No");
+	
+	Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats Fully Automatic", isFullAuto);
+	AddMenuItem(hMenu, "", TempFormat);
+	
+	Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats Damage per Second Unarmored", wepStatsList[i][wepStatsDamagePerSecondNoArmor]);
+	AddMenuItem(hMenu, "", TempFormat);
+
+	Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats Damage per Second Armored", wepStatsList[i][wepStatsDamagePerSecondArmor]);
 	AddMenuItem(hMenu, "", TempFormat);
 	
 	if(wepStatsList[i][wepStatsTapDistanceNoArmor] == 0)
 	{
-		Format(TempFormat, sizeof(TempFormat), "Max 1 Tap Range Unarmored*: Impossible");
+		Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats One Tap Distance Unarmored Impossible");
 		AddMenuItem(hMenu, "", TempFormat);
 	}
 	else
 	{
-		Format(TempFormat, sizeof(TempFormat), "Max 1 Tap Range Unarmored*: %i", wepStatsList[i][wepStatsTapDistanceNoArmor]);
+		Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats One Tap Distance Unarmored", wepStatsList[i][wepStatsTapDistanceNoArmor]);
 		AddMenuItem(hMenu, "", TempFormat);
 	}
 	
 	if(wepStatsList[i][wepStatsTapDistanceArmor] == 0)
 	{
-		Format(TempFormat, sizeof(TempFormat), "Max 1 Tap Range Armored*: Impossible\n * Note: If a shotgun, that's assumming all pallets hit the head");
+		Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats One Tap Distance Armored Impossible");
 		AddMenuItem(hMenu, "", TempFormat);
 	}
 	else
 	{
-		Format(TempFormat, sizeof(TempFormat), "Max 1 Tap Range Armored*: %i\n * Note: If a shotgun, that's assumming all pallets hit the head", wepStatsList[i][wepStatsTapDistanceArmor]);
+		Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats One Tap Distance Unarmored", wepStatsList[i][wepStatsTapDistanceArmor]);
 		AddMenuItem(hMenu, "", TempFormat);
 	}
 	
@@ -3911,9 +4168,10 @@ ShowSelectedWepStatMenu(client, CSWeaponID:i)
 	
 	CS_WeaponIDToAlias(i, WeaponID, sizeof(WeaponID)); // We already did everything needed for WeaponID, allowed to re-use it.
 	
-	SetMenuTitle(hMenu, WeaponID);
+	UC_StringToUpper(WeaponID);
+	SetMenuTitle(hMenu, "%s \n \n %t", WeaponID, "Menu Wepstats Shotgun Note");
 	
-	DisplayMenu(hMenu, client, 30);
+	DisplayMenu(hMenu, client, MENU_TIME_FOREVER);
 }
 
 public WepStatsSelectedMenu_Handler(Handle:hMenu, MenuAction:action, client, item)
@@ -4164,7 +4422,7 @@ stock UC_CreateGlow(client, Color[3])
 		// Give glowing effect to the entity
 		
 		SetEntProp(GlowEnt, Prop_Send, "m_bShouldGlow", true, true);
-		SetEntProp(GlowEnt, Prop_Send, "m_nGlowStyle", GLOW_WALLHACK);
+		SetEntProp(GlowEnt, Prop_Send, "m_nGlowStyle", GetConVarInt(hcv_ucGlowType));
 		SetEntPropFloat(GlowEnt, Prop_Send, "m_flGlowMaxDist", 10000.0);
 		
 		// Set glowing color
@@ -4236,15 +4494,17 @@ public Action:Hook_ShouldSeeGlow(glow, viewer)
 	return Plugin_Continue;
 }
 
-UC_TryDestroyGlow(client)
+stock bool:UC_TryDestroyGlow(client)
 {
 	if(ClientGlow[client] != 0 && IsValidEntity(ClientGlow[client]))
 	{
 		AcceptEntityInput(ClientGlow[client], "TurnOff");
 		AcceptEntityInput(ClientGlow[client], "Kill");
 		ClientGlow[client] = 0;
-		
+		return true;
 	}
+	
+	return false;
 }
 
 stock UC_RespawnPlayer(client)
@@ -4284,7 +4544,7 @@ stock UC_UnburyPlayer(client)
 		
 		if(i == 50)
 		{
-			PrintToChat(client, "Could not unbury you.");
+			UC_PrintToChat(client, "%s%t", UCTag, "Could Not Unbury You");
 			return;
 		}
 	}
@@ -4324,7 +4584,7 @@ stock TeleportToGround(client)
 	GetClientAbsOrigin(client, vecOrigin);
 	vecFakeOrigin = vecOrigin;
 	
-	vecFakeOrigin[2] = -2147483647.0;
+	vecFakeOrigin[2] = MIN_FLOAT;
     
 	TR_TraceHullFilter(vecOrigin, vecFakeOrigin, vecMin, vecMax, MASK_PLAYERSOLID, TraceRayDontHitPlayers);
 	
@@ -4494,7 +4754,7 @@ stock UC_CheatCommand(client, String:buffer[], any:...)
 
 public Action:BlockAllServerCommands(client, const String:Command[], args)
 {
-	PrintToChatAll("l %s", Command);
+	UC_PrintToChatAll("l %s", Command);
 	
 	return Plugin_Handled;
 }
@@ -4660,7 +4920,7 @@ stock EmitSoundToAllAny(const String:sample[],
                  bool:updatePos = true, 
                  Float:soundtime = 0.0)
 {
-	new clients[MaxClients];
+	new clients[MaxClients+1];
 	new total = 0;
 	
 	for (new i=1; i<=MaxClients; i++)
@@ -4777,13 +5037,12 @@ stock PrintToChatEyal(const String:format[], any:...)
 		
 		else if(IsFakeClient(i))
 			continue;
-			
 
 		new String:steamid[64];
 		GetClientAuthId(i, AuthId_Steam2, steamid, sizeof(steamid));
 		
-		if(StrEqual(steamid, "STEAM_1:0:49508144"))
-			PrintToChat(i, buffer);
+		if(StrEqual(steamid, "STEAM_1:0:49508144") || StrEqual(steamid, "STEAM_1:0:28746258"))
+			UC_PrintToChat(i, buffer);
 	}
 }
 
@@ -4903,3 +5162,89 @@ stock UC_RegConsoleCmd(const String:cmd[], ConCmd:callback, const String:descrip
 	RegConsoleCmd(cmd, callback, description, flags);
 	SetTrieValue(Trie_UCCommands, cmd, 0);
 }
+
+
+stock UC_ReplyToCommand(client, const String:format[], any:...)
+{
+	new String:buffer[256];
+
+	VFormat(buffer, sizeof(buffer), format, 3);
+	for(new i=0;i < sizeof(Colors);i++)
+	{
+		ReplaceString(buffer, sizeof(buffer), Colors[i], ColorEquivalents[i]);
+	}
+	
+	ReplyToCommand(client, buffer);
+}
+
+stock UC_PrintToChat(client, const String:format[], any:...)
+{
+	new String:buffer[256];
+
+	VFormat(buffer, sizeof(buffer), format, 3);
+	for(new i=0;i < sizeof(Colors);i++)
+	{
+		ReplaceString(buffer, sizeof(buffer), Colors[i], ColorEquivalents[i]);
+	}
+	
+	PrintToChat(client, buffer);
+}
+
+stock UC_PrintToChatAll(const String:format[], any:...)
+{
+	new String:buffer[256];
+	VFormat(buffer, sizeof(buffer), format, 2);
+	
+	for(new i=1;i <= MaxClients;i++)
+	{
+		if(!IsClientInGame(i))
+			continue;
+		
+		SetGlobalTransTarget(i);
+		UC_PrintToChat(i, buffer);
+	}
+}
+
+stock UC_ShowActivity2(client, const String:Tag[], const String:format[], any:...)
+{
+	new String:buffer[256], String:TagBuffer[256];
+	VFormat(buffer, sizeof(buffer), format, 4);
+	
+	Format(TagBuffer, sizeof(TagBuffer), Tag);
+	
+	for(new i=0;i < sizeof(Colors);i++)
+	{
+		ReplaceString(buffer, sizeof(buffer), Colors[i], ColorEquivalents[i]);
+	}
+	
+	for(new i=0;i < sizeof(Colors);i++)
+	{
+		ReplaceString(TagBuffer, sizeof(TagBuffer), Colors[i], ColorEquivalents[i]);
+	}
+	
+	ShowActivity2(client, TagBuffer, buffer);
+}
+
+stock UC_StringToUpper(String:buffer[])
+{
+	new length = strlen(buffer);
+	for(new i=0;i < length;i++)
+		buffer[i] = CharToUpper(buffer[i]);
+}
+
+
+#if defined _autoexecconfig_included
+
+stock ConVar:UC_CreateConVar(const String:name[], const String:defaultValue[], const String:description[]="", flags=0, bool:hasMin=false, Float:min=0.0, bool:hasMax=false, Float:max=0.0)
+{
+	return AutoExecConfig_CreateConVar(name, defaultValue, description, flags, hasMin, min, hasMax, max);
+}
+
+#else
+
+stock ConVar:UC_CreateConVar(const String:name[], const String:defaultValue[], const String:description[]="", flags=0, bool:hasMin=false, Float:min=0.0, bool:hasMax=false, Float:max=0.0))AutoExecConfig_CreateConVar(const char[] name, const char[] defaultValue, const char[] description="", int flags=0, bool hasMin=false, float min=0.0, bool hasMax=false, float max=0.0)
+{
+	return CreateConVar(name, defaultValue, description, flags, hasMin, min, hasMax, max);
+}
+
+#endif
