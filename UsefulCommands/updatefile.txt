@@ -2,9 +2,10 @@
 {
 	"Version"
 	{
-		"Latest"	"3.1"
+		"Latest"	"3.2"
 	}
 	
+	"Notes" "Some translation changes"
 	"Notes" "Some bug fixes"
 }
 	
@@ -12,4 +13,5 @@
 {
 	"Plugin"	"Path_SM/plugins/UsefulCommands.smx"
 	"Plugin"	"Path_SM/translations/UsefulCommands.phrases.txt"
+	"Plugin"	"Path_SM/translations/ru/UsefulCommands.phrases.txt"
 }
