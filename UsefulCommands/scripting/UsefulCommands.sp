@@ -28,11 +28,12 @@
 #undef REQUIRE_PLUGIN
 #tryinclude <updater>  // Comment out this line to remove updater support by force.
 #tryinclude <autoexecconfig>
+
 #define UPDATE_URL    "https://raw.githubusercontent.com/eyal282/AlliedmodsUpdater/master/UsefulCommands/updatefile.txt"
 
 //#define TEST
 
-new const String:PLUGIN_VERSION[] = "3.1";
+new const String:PLUGIN_VERSION[] = "3.2";
 
 public Plugin:myinfo = 
 {
@@ -1715,7 +1716,7 @@ public UsefulCommands_OnPlayerAcePost(client, const String:FunFact[])
 {
 	if(GetConVarInt(hcv_ucAcePriority) > 0)
 	{
-		UC_PrintToChatAll("%t", "Scored an Ace", client);
+		UC_PrintToChatAll("%s%t", UCTag, "Scored an Ace", client);
 	}
 }
 
@@ -4219,6 +4220,8 @@ public Action:Command_UC(client, args)
 
 	CloseHandle(Trie_Snapshot);
 	DisplayMenu(hMenu, client, MENU_TIME_FOREVER);
+	
+	return Plugin_Handled;
 }
 
 
