@@ -2,10 +2,10 @@
 {
 	"Version"
 	{
-		"Latest"	"3.3"
+		"Latest"	"3.4"
 	}
 	
-	"Notes" "Some translation bug fixes"
+	"Notes" "VFormat bug fix"
 }
 	
 "Files"
