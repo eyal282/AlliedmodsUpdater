@@ -33,7 +33,7 @@
 
 //#define TEST
 
-new const String:PLUGIN_VERSION[] = "3.3";
+new const String:PLUGIN_VERSION[] = "3.4";
 
 public Plugin:myinfo = 
 {
@@ -3837,7 +3837,7 @@ public LastConnected_MenuHandler(Handle:hMenu, MenuAction:action, client, item)
 
 		if(!CheckCommandAccess(client, "sm_uc_last_showip", ADMFLAG_ROOT))
 		{
-			Format(IPAddress, sizeof(IPAddress), "%t", "No admin access");
+			Format(IPAddress, sizeof(IPAddress), "%t", "No Admin Access");
 		}	
 		FormatTime(Date, sizeof(Date), "%d/%m/%Y - %H:%M:%S", LastConnect);
 		
@@ -5205,7 +5205,7 @@ stock UC_PrintToChatAll(const String:format[], any:...)
 			continue;
 		
 		SetGlobalTransTarget(i);
-		VFormat(buffer, sizeof(buffer), format, 3);
+		VFormat(buffer, sizeof(buffer), format, 2);
 		
 		UC_PrintToChat(i, buffer);
 	}
