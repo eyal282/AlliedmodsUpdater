@@ -33,7 +33,7 @@
 
 //#define TEST
 
-new const String:PLUGIN_VERSION[] = "3.2";
+new const String:PLUGIN_VERSION[] = "3.3";
 
 public Plugin:myinfo = 
 {
@@ -5118,39 +5118,39 @@ stock SetClientHelmet(client, bool:helmet)
 // Adapted from util.h's UTIL_PrintToClientFilter 
 stock UC_PrintCenterTextAll(const String:msg_name[], const String:param1[]="", const String:param2[]="", const String:param3[]="", const String:param4[]="")
 { 
-	new clients[MAXPLAYERS+1], numClients;
-	
+	new UserMessageType:MessageType = GetUserMessageType();
 	for(new i=1;i <= MaxClients;i++)
 	{
 		if(!IsClientInGame(i))
 			continue;
-			
-		clients[numClients++] = i;
-	}
-	new Handle:bf = StartMessage("TextMsg", clients, numClients, USERMSG_RELIABLE); 
-     
-	if (GetUserMessageType() == UM_Protobuf) 
-	{ 
-		PbSetInt(bf, "msg_dst", HUD_PRINTCENTER); 
-		PbAddString(bf, "params", msg_name); 
-			
-		PbAddString(bf, "params", param1); 
-		PbAddString(bf, "params", param2); 
-		PbAddString(bf, "params", param3); 
-		PbAddString(bf, "params", param4); 
-	} 
-	else 
-	{ 
-		BfWriteByte(bf, HUD_PRINTCENTER); 
-		BfWriteString(bf, msg_name); 
 		
-		BfWriteString(bf, param1); 
-		BfWriteString(bf, param2); 
-		BfWriteString(bf, param3); 
-		BfWriteString(bf, param4); 
+		SetGlobalTransTarget(i);
+		
+		new Handle:bf = StartMessageOne("TextMsg", i, USERMSG_RELIABLE); 
+		 
+		if (MessageType == UM_Protobuf) 
+		{ 
+			PbSetInt(bf, "msg_dst", HUD_PRINTCENTER); 
+			PbAddString(bf, "params", msg_name); 
+				
+			PbAddString(bf, "params", param1); 
+			PbAddString(bf, "params", param2); 
+			PbAddString(bf, "params", param3); 
+			PbAddString(bf, "params", param4); 
+		} 
+		else 
+		{ 
+			BfWriteByte(bf, HUD_PRINTCENTER); 
+			BfWriteString(bf, msg_name); 
+			
+			BfWriteString(bf, param1); 
+			BfWriteString(bf, param2); 
+			BfWriteString(bf, param3); 
+			BfWriteString(bf, param4); 
+		}
+		 
+		EndMessage(); 
 	}
-     
-	EndMessage(); 
 }  
 
 // Registers a command and saves it for later when we wanna iterate all commands.
@@ -5169,6 +5169,7 @@ stock UC_RegConsoleCmd(const String:cmd[], ConCmd:callback, const String:descrip
 
 stock UC_ReplyToCommand(client, const String:format[], any:...)
 {
+	SetGlobalTransTarget(client);
 	new String:buffer[256];
 
 	VFormat(buffer, sizeof(buffer), format, 3);
@@ -5182,8 +5183,10 @@ stock UC_ReplyToCommand(client, const String:format[], any:...)
 
 stock UC_PrintToChat(client, const String:format[], any:...)
 {
+	SetGlobalTransTarget(client);
+	
 	new String:buffer[256];
-
+	
 	VFormat(buffer, sizeof(buffer), format, 3);
 	for(new i=0;i < sizeof(Colors);i++)
 	{
@@ -5194,16 +5197,16 @@ stock UC_PrintToChat(client, const String:format[], any:...)
 }
 
 stock UC_PrintToChatAll(const String:format[], any:...)
-{
+{	
 	new String:buffer[256];
-	VFormat(buffer, sizeof(buffer), format, 2);
-	
 	for(new i=1;i <= MaxClients;i++)
 	{
 		if(!IsClientInGame(i))
 			continue;
 		
 		SetGlobalTransTarget(i);
+		VFormat(buffer, sizeof(buffer), format, 3);
+		
 		UC_PrintToChat(i, buffer);
 	}
 }
