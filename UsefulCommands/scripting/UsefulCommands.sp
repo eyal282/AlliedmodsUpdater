@@ -33,7 +33,7 @@
 
 //#define TEST
 
-new const String:PLUGIN_VERSION[] = "3.4";
+new const String:PLUGIN_VERSION[] = "3.5";
 
 public Plugin:myinfo = 
 {
@@ -2673,12 +2673,19 @@ public Action:Command_RestartRound(client, args)
 		IntToString(iSecondsBeforeRestart, strSecondsBeforeRestart, sizeof(strSecondsBeforeRestart));
 		
 		if(iSecondsBeforeRestart == 1)
-			Format(Arg, sizeof(Arg), "%t", "Second");
+			Format(Arg, sizeof(Arg), "#SFUI_Seconds");
 			
 		else 
-			Format(Arg, sizeof(Arg), "%t", "Seconds");
+			Format(Arg, sizeof(Arg), "#SFUI_Second");
 			
 		UC_PrintCenterTextAll("#SFUI_Notice_Game_will_restart_in", strSecondsBeforeRestart, Arg);
+	
+		if(iSecondsBeforeRestart == 1)
+			Format(Arg, sizeof(Arg), "Second");
+			
+		else 
+			Format(Arg, sizeof(Arg), "Seconds");
+
 		UC_PrintToChatAll("%s%t", UCTag, "Admin Restart Round", client, iSecondsBeforeRestart, Arg);
 		hRRTimer = CreateTimer(SecondsBeforeRestart, RestartRound, _, TIMER_FLAG_NO_MAPCHANGE);
 	}
@@ -2721,10 +2728,10 @@ public Action:Command_RestartGame(client, args)
 	if(SecondsBeforeRestart != 0)
 	{
 		if(SecondsBeforeRestart == 1)
-			Format(Arg, sizeof(Arg), "%t", "Second");
+			Format(Arg, sizeof(Arg), "Second");
 			
 		else 
-			Format(Arg, sizeof(Arg), "%t", "Seconds");
+			Format(Arg, sizeof(Arg), "Seconds");
 			
 		UC_PrintToChatAll("%s%t", UCTag, "Admin Restart Game", client, SecondsBeforeRestart, Arg);
 	}	
@@ -2747,10 +2754,10 @@ public Action:Command_RestartServer(client, args)
 		new String:Arg[15];
 		hRestartTimer = CreateTimer(5.0, RestartServer, _, TIMER_FLAG_NO_MAPCHANGE);
 		//if(iSecondsBeforeRestart == 1)
-			//Format(Arg, sizeof(Arg), "%t", "Second");
+			//Format(Arg, sizeof(Arg), "Second");
 			
 		//else 
-		Format(Arg, sizeof(Arg), "%t", "Seconds");
+		Format(Arg, sizeof(Arg), "Seconds");
 			
 		UC_PrintToChatAll("%s%t", UCTag, "Admin Restart Server", client, 5, Arg);
 	}

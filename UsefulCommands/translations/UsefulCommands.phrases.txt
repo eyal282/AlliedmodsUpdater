@@ -165,7 +165,7 @@
 	}
 	"Admin Restart Round"
 	{
-		"#format"	"{1:N},{2:i},{3:s}"
+		"#format"	"{1:N},{2:i},{3:t}"
 		"en" "Admin{GREEN} {1}{NORMAL} will{LIGHTGREEN} restart{NORMAL} the round in{OLIVE} {2}{NORMAL} {3}!"
 	}
 	"Admin Stopped Restart Round"
@@ -175,7 +175,7 @@
 	}
 	"Admin Restart Game"
 	{
-		"#format"	"{1:N},{2:i},{3:s}"
+		"#format"	"{1:N},{2:i},{3:t}"
 		"en" "{NORMAL}Admin{GREEN} {1}{NORMAL} will{LIGHTGREEN} restart{NORMAL} the game in{OLIVE} {2}{NORMAL} {3}!"
 	}
 	"Admin Stopped Restart Game"
@@ -185,7 +185,7 @@
 	}
 	"Admin Restart Server"
 	{
-		"#format"	"{1:N},{2:i},{3:s}"
+		"#format"	"{1:N},{2:i},{3:t}"
 		"en" "{NORMAL}Admin{GREEN} {1}{NORMAL} will{LIGHTGREEN} restart{NORMAL} the server in{OLIVE} {2}{NORMAL} {3}!"
 	}
 	"Admin Stopped Restart Server"

@@ -1,4 +1,4 @@
-"Phrases"
+﻿"Phrases"
 {
 	"Party Mode is Disabled"
 	{
@@ -165,7 +165,7 @@
 	}
 	"Admin Restart Round"
 	{
-		"#format"	"{1:N},{2:i},{3:s}"
+		"#format"	"{1:N},{2:i},{3:t}"
 		"ru" "Админ{GREEN} {1}{NORMAL} {LIGHTGREEN} перезапустит{NORMAL} раунд через{OLIVE} {2}{NORMAL} {3}!"
 	}
 	"Admin Stopped Restart Round"
@@ -175,7 +175,7 @@
 	}
 	"Admin Restart Game"
 	{
-		"#format"	"{1:N},{2:i},{3:s}"
+		"#format"	"{1:N},{2:i},{3:t}"
 		"ru" "{NORMAL}Админ{GREEN} {1}{NORMAL} {LIGHTGREEN} сбросит{NORMAL} счёт игры через{OLIVE} {2}{NORMAL} {3}!"
 	}
 	"Admin Stopped Restart Game"
@@ -185,7 +185,7 @@
 	}
 	"Admin Restart Server"
 	{
-		"#format"	"{1:N},{2:i},{3:s}"
+		"#format"	"{1:N},{2:i},{3:t}"
 		"ru" "{NORMAL}Админ{GREEN} {1}{NORMAL} {LIGHTGREEN}перезагрузит{NORMAL} сервер через{OLIVE} {2}{NORMAL} {3}!"
 	}
 	"Admin Stopped Restart Server"
