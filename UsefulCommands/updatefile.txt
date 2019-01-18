@@ -6,6 +6,8 @@
 	}
 	
 	"Notes" "Translations bug fixes"
+	"Notes" "!wepstats bug fixes"
+	"Notes" "!blink better than ever"
 }
 	
 "Files"
