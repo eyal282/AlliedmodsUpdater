@@ -188,6 +188,11 @@
 		"#format"	"{1:N},{2:i},{3:t}"
 		"en" "{NORMAL}Admin{GREEN} {1}{NORMAL} will{LIGHTGREEN} restart{NORMAL} the server in{OLIVE} {2}{NORMAL} {3}!"
 	}
+	"Admin Restart Server Next Round"
+	{
+		"#format"	"{1:N}"
+		"en" "{NORMAL}Admin{GREEN} {1}{NORMAL} will{LIGHTGREEN} restart{NORMAL} the server in{OLIVE} the next round{NORMAL}!"
+	}
 	"Admin Stopped Restart Server"
 	{
 		"#format"	"{1:N}"
@@ -493,5 +498,40 @@
 	"Could Not Unbury You"
 	{
 		"en" "Could not unbury you."
+	}
+	"Command Usage Admin Cookies #1"
+	{
+		"#format"	"{1:s}"
+		"en" "Usage: {1} <name> <reset> <value>"
+	}
+	"Command Usage Admin Cookies #2"
+	{
+		"#format"	"{1:s}"
+		"en" "Usage: {1} <name> <set> <#userid|name> <value>"
+	}
+	"Command Usage Admin Cookies #3"
+	{
+		"#format"	"{1:s}"
+		"en" "Usage: {1} <name> <offlineset> <\"AuthId\"> <value>"
+	}
+	"Command Admin Cookies Get Value"
+	{
+		"#format"	"{1:s},{2:s},{3:s}"
+		"en" "{1}'s value for {2} is {3}"
+	}
+	"Command Admin Cookies Get Value Not Found"
+	{
+		"#format"	"{1:s},{2:s}"
+		"en" "{1} does not have a perference cookie for \"{2}\""
+	}
+	"Command Admin Cookies Set Value"
+	{
+		"#format"	"{1:s},{2:s},{3:s}"
+		"en" "Changed the value of cookie \"{1}\" for {2} to \"{3}\"
+	}
+	"Command Admin Cookies Reset Success"
+	{
+		"#format"	"{1:s},{2:s}"
+		"en" "Successfully reset value of cookie \"{1}\" for everyone to value \"{2}\""
 	}
 }

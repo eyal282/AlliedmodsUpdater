@@ -8,7 +8,7 @@
 #include <clientprefs>
 
 #define MAX_INTEGER 2147483647
-#define MIN_FLOAT -2147483647.0 // I think -2147483648 is lowest but meh.
+#define MIN_FLOAT -2147483647.0 // I think -2147483648 is lowest but meh, same thing.
 
 #define CHRISTMASS_PRESENT_BODYINDEX 1
 
@@ -33,7 +33,7 @@
 
 //#define TEST
 
-new const String:PLUGIN_VERSION[] = "3.5";
+new const String:PLUGIN_VERSION[] = "3.6";
 
 public Plugin:myinfo = 
 {
@@ -152,6 +152,7 @@ new Handle:hcv_ucReviveOnTeamChange = INVALID_HANDLE;
 new Handle:hcv_ucPacketNotifyCvars = INVALID_HANDLE;
 new Handle:hcv_ucGlowType = INVALID_HANDLE;
 new Handle:hcv_ucTag = INVALID_HANDLE;
+new Handle:hcv_ucRestartRoundOnMapStart = INVALID_HANDLE;
 
 new Handle:hCookie_EnablePM = INVALID_HANDLE;
 new Handle:hCookie_AceFunFact = INVALID_HANDLE;
@@ -181,7 +182,7 @@ new Handle:fw_ucWeaponStatsRetrievedPost = INVALID_HANDLE;
 
 new bool:AceSent = false, TrueTeam[MAXPLAYERS+1];
 
-new Handle:dbLocal;
+new Handle:dbLocal, Handle:dbClientPrefs;
 
 new bool:FullInGame[MAXPLAYERS+1];
 
@@ -190,7 +191,7 @@ new Float:LastHeight[MAXPLAYERS+1];
 new Handle:hRestartTimer = INVALID_HANDLE;
 new Handle:hRRTimer = INVALID_HANDLE;
 
-new bool:Restart = false;
+new bool:RestartNR = false;
 
 new Handle:hcv_TagScale = INVALID_HANDLE;
 
@@ -290,12 +291,14 @@ public Native_GetWeaponStatsList(Handle:caller, numParams)
 
 public OnPluginStart()
 {
+
 	AutoExecConfig_SetFile("UsefulCommands");
 	
 	Trie_UCCommands = CreateTrie();
 	
 	LoadTranslations("UsefulCommands.phrases");
 	LoadTranslations("common.phrases");
+	LoadTranslations("clientprefs.phrases");
 	
 	fw_ucAce = CreateGlobalForward("UsefulCommands_OnPlayerAce", ET_Event, Param_CellByRef, Param_String);
 	fw_ucAcePost = CreateGlobalForward("UsefulCommands_OnPlayerAcePost", ET_Ignore, Param_Cell, Param_String);
@@ -312,12 +315,12 @@ public OnPluginStart()
 	//svCheatsFlags = GetConVarFlags(hcv_svCheats);
 	
 	
-	SetConVarString(CreateConVar("uc_version", PLUGIN_VERSION, _, FCVAR_NOTIFY), PLUGIN_VERSION);
 	hcv_ucTag = UC_CreateConVar("uc_tag", "[{RED}UC{NORMAL}] {NORMAL}", _, FCVAR_PROTECTED);
 	hcv_TagScale = UC_CreateConVar("uc_bullet_tagging_scale", "1.0", "5000000.0 is more than enough to disable tagging completely. Below 1.0 makes tagging stronger. 1.0 for default game behaviour", FCVAR_NOTIFY, true, 0.0);
 	hcv_ucSpecialC4Rules = UC_CreateConVar("uc_special_bomb_rules", "0", "If 1, CT can pick-up C4 but can't abuse it in any way ( e.g dropping it in unreachable spots ) and can't get rid of it unless to another player.", FCVAR_NOTIFY);
 	hcv_ucAcePriority = UC_CreateConVar("uc_ace_priority", "2", "Prioritize Ace over all other fun facts of a round's end and print a message when a player makes an ace. Set to 2 if you want players to have a custom fun fact on ace.");
 	hcv_ucReviveOnTeamChange = UC_CreateConVar("uc_revive_on_team_change", "1", "Revive the player when an admin sets his team.");
+	hcv_ucRestartRoundOnMapStart = UC_CreateConVar("uc_restart_round_on_map_start", "1", "Restart the round when the map starts to block bug where round_start is never called on the first round.");
 	
 	GetConVarString(hcv_ucTag, UCTag, sizeof(UCTag));
 	HookConVarChange(hcv_ucTag, hcvChange_ucTag);
@@ -502,6 +505,12 @@ public OnAllPluginsLoaded()
 	if(!CommandExists("sm_silentcvar"))
 		UC_RegAdminCmd("sm_silentcvar", Command_SilentCvar, ADMFLAG_ROOT, "Changes cvar without in-game notification."); // I cannot afford to allow less than Root as I cannot monitor protected cvars. Changing access flag means the admin can get rcon_password.
 		
+	if(!CommandExists("sm_acookies"))
+		UC_RegAdminCmd("sm_acookies", Command_AdminCookies, ADMFLAG_ROOT, "Powerful cookie editing abilities");
+		
+	if(!CommandExists("sm_admincookies"))
+		UC_RegAdminCmd("sm_admincookies", Command_AdminCookies, ADMFLAG_ROOT, "Powerful cookie editing abilities");
+	
 	if(!CommandExists("sm_hug"))
 		UC_RegConsoleCmd("sm_hug", Command_Hug, "Hugs a dead player.");
 	
@@ -542,6 +551,14 @@ public OnAllPluginsLoaded()
 			
 		if(!CommandExists("sm_weaponstats"))
 			UC_RegConsoleCmd("sm_weaponstats", Command_WepStats, "Shows the stats of all weapons");
+			
+		//if(!CommandExists("sm_wepstatsvs"))
+			//UC_RegConsoleCmd("sm_wepstatsvs", Command_WepStatsVS, "Compares the stats of 2 weapons");
+			
+		//if(!CommandExists("sm_weaponstatsvs"))
+			//UC_RegConsoleCmd("sm_weaponstatsvs", Command_WepStatsVS, "Compares the stats of 2 weapons");
+			
+		
 	}	
 		
 	HookEvent("player_spawn", Event_PlayerSpawn, EventHookMode_Post);
@@ -551,6 +568,7 @@ public OnAllPluginsLoaded()
 	HookEvent("cs_win_panel_round", Event_CsWinPanelRound, EventHookMode_Pre);
 	HookEvent("round_start", Event_RoundStart, EventHookMode_PostNoCopy);
 	HookEvent("round_end", Event_RoundEnd, EventHookMode_Post);
+	
 	
 	#if defined _autoexecconfig_included
 	
@@ -570,10 +588,8 @@ public ConnectToDatabase()
 {		
 	new String:Error[256];
 	if((dbLocal = SQLite_UseDatabase("sourcemod-local", Error, sizeof(Error))) == INVALID_HANDLE)
-	{
 		LogError(Error);
-		return;
-	}	
+	
 	else
 	{ 
 		SQL_TQuery(dbLocal, SQLCB_Error, "CREATE TABLE IF NOT EXISTS UsefulCommands_LastPlayers (AuthId VARCHAR(32) NOT NULL UNIQUE, LastConnect INT(11) NOT NULL, IPAddress VARCHAR(32) NOT NULL, Name VARCHAR(64) NOT NULL)", DBPrio_High); 
@@ -584,6 +600,11 @@ public ConnectToDatabase()
 				
 			LoadChickenSpawns();
 		}
+	}
+	
+	if((dbClientPrefs = SQLite_UseDatabase("clientprefs-sqlite", Error, sizeof(Error))) == INVALID_HANDLE)
+	{
+		LogError(Error);
 	}
 }
 
@@ -674,6 +695,8 @@ public Event_TeleportSpawnPost(entity)
 
 public OnConfigsExecuted()
 {
+	SetConVarString(CreateConVar("uc_version", PLUGIN_VERSION, _, FCVAR_NOTIFY), PLUGIN_VERSION); // Last resort due to past mistake.
+	
 	if(!isCSGO())
 		return;
 	
@@ -843,11 +866,12 @@ public OnConfigsExecuted()
 							new Float:Range;
 							wepStatsList[i][wepStatsDamageDropoff] = RoundFloat(100.0 - (Range=KvGetFloat(keyValues, "range modifier")) * 100.0);
 							
-							if(FloatCompare(Range, 100.0) == 0)
+							if(Range == 0.0)
 							{
 								wepStatsList[i][wepStatsDamageDropoff] = wepStatsList[WepNone][wepStatsDamageDropoff];
 								Range = (100.0 - float(wepStatsList[i][wepStatsDamageDropoff])) / 100.0;
-							}	
+							}
+								
 							wepStatsList[i][wepStatsMaxDamageRange] = KvGetNum(keyValues, "range", wepStatsList[WepNone][wepStatsMaxDamageRange]);
 							wepStatsList[i][wepStatsPalletsPerShot] = KvGetNum(keyValues, "bullets", wepStatsList[WepNone][wepStatsPalletsPerShot]);
 							wepStatsList[i][wepStatsDamage] = (wepStatsList[i][wepStatsDamagePerPallet] = KvGetNum(keyValues, "damage", wepStatsList[WepNone][wepStatsDamage])) * wepStatsList[i][wepStatsPalletsPerShot];
@@ -1217,6 +1241,10 @@ public Action:Event_RoundEnd(Handle:hEvent, const String:Name[], bool:dontBroadc
 }
 public Action:Event_RoundStart(Handle:hEvent, const String:Name[], bool:dontBroadcast)
 {
+	if(RestartNR)
+	{
+		CreateTimer(0.5, RestartServer, _, TIMER_FLAG_NO_MAPCHANGE);
+	}
 	// AceCandidate is -1 for nobody and -2 for disqualification of the team.
 	AceCandidate[CS_TEAM_CT] = -1;
 	AceCandidate[CS_TEAM_T] = -1;
@@ -2006,6 +2034,7 @@ public OnMapEnd()
 
 public OnMapStart()
 {
+	RestartNR = true;
 	RoundNumber++;
 	GetCurrentMap(MapName, sizeof(MapName));
 	
@@ -2067,8 +2096,15 @@ public OnMapStart()
 	
 	hRestartTimer = INVALID_HANDLE;
 	hRRTimer = INVALID_HANDLE;
-	Restart = false;
+	RestartNR = false;
 	
+	RequestFrame(RestartRoundOnMapStart, 0);
+}
+
+public RestartRoundOnMapStart(dummy_value)
+{
+	if(!isLateLoaded && GetConVarBool(hcv_ucRestartRoundOnMapStart))
+		CS_TerminateRound(0.1, CSRoundEnd_Draw, true);
 }
 
 public OnGameFrame()
@@ -2711,19 +2747,19 @@ public Action:RestartRound(Handle:hTimer)
 public Action:Command_RestartGame(client, args)
 {
 	new SecondsBeforeRestart;
+	
 	new String:Arg[11];
-	GetCmdArg(1, Arg, sizeof(Arg));
 	
 	if(args > 0)
 	{
-	
+		GetCmdArg(1, Arg, sizeof(Arg));
+		
 		SecondsBeforeRestart = StringToInt(Arg);
 	}
 	else
 		SecondsBeforeRestart = 1;
-		
-	ServerCommand("mp_restartgame %i", SecondsBeforeRestart);
 	
+	ServerCommand("mp_restartgame %i", SecondsBeforeRestart);
 	
 	if(SecondsBeforeRestart != 0)
 	{
@@ -2732,7 +2768,7 @@ public Action:Command_RestartGame(client, args)
 			
 		else 
 			Format(Arg, sizeof(Arg), "Seconds");
-			
+		
 		UC_PrintToChatAll("%s%t", UCTag, "Admin Restart Game", client, SecondsBeforeRestart, Arg);
 	}	
 	else
@@ -2749,29 +2785,55 @@ public Action:Command_RestartGame(client, args)
 
 public Action:Command_RestartServer(client, args)
 {
-	if(!Restart)
+	if(hRestartTimer == INVALID_HANDLE && !RestartNR)
 	{
 		new String:Arg[15];
-		hRestartTimer = CreateTimer(5.0, RestartServer, _, TIMER_FLAG_NO_MAPCHANGE);
-		//if(iSecondsBeforeRestart == 1)
-			//Format(Arg, sizeof(Arg), "Second");
+
+		GetCmdArg(1, Arg, sizeof(Arg));
+
+		new SecondsBeforeRestart;
+		if(!StrEqual(Arg, "NR", false) && !StrEqual(Arg, "Next Round", false) && !StrEqual(Arg, "NextRound", false))
+		{	
+			if(args > 0)
+				SecondsBeforeRestart = StringToInt(Arg);
+
+			else
+				SecondsBeforeRestart = 5;
 			
-		//else 
-		Format(Arg, sizeof(Arg), "Seconds");
+			if(SecondsBeforeRestart == 0)
+			{
+				if(hRestartTimer != INVALID_HANDLE)
+				{
+					CloseHandle(hRestartTimer);
+					hRestartTimer = INVALID_HANDLE;
+				}
+				return Plugin_Handled;
+			}
 			
-		UC_PrintToChatAll("%s%t", UCTag, "Admin Restart Server", client, 5, Arg);
+			hRestartTimer = CreateTimer(float(SecondsBeforeRestart), RestartServer, _, TIMER_FLAG_NO_MAPCHANGE);
+			
+			if(SecondsBeforeRestart == 1)
+				Format(Arg, sizeof(Arg), "Second");
+				
+			else 
+				Format(Arg, sizeof(Arg), "Seconds");
+				
+			UC_PrintToChatAll("%s%t", UCTag, "Admin Restart Server", client, SecondsBeforeRestart, Arg);
+		}
+		else
+		{
+			RestartNR = true;
+			UC_PrintToChatAll("%s%t", UCTag, "Admin Restart Server Next Round", client);
+		}
 	}
 	else
 	{
-		if(hRestartTimer != INVALID_HANDLE)
-		{
-			CloseHandle(hRestartTimer);
-			hRestartTimer = INVALID_HANDLE;
-		}
+		CloseHandle(hRestartTimer);
+		hRestartTimer = INVALID_HANDLE;
 		
+		RestartNR = false;
 		UC_PrintToChatAll("%s%t", UCTag, "Admin Stopped Restart Server", client);
 	}
-	Restart = !Restart;
 	
 	return Plugin_Handled;
 }
@@ -2780,8 +2842,7 @@ public Action:RestartServer(Handle:hTimer)
 {
 	hRestartTimer = INVALID_HANDLE;	
 	
-	ServerCommand("changelevel \"%s\"", MapName);
-
+	UC_RestartServer();
 }
 
 public Action:Command_Glow(client, args)
@@ -4012,6 +4073,194 @@ public Action:Command_SilentCvar(client, args)
 	return Plugin_Handled;
 }
 
+public Action:Command_AdminCookies(client, args)
+{
+	if (args < 3)
+	{
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Admin Cookies #1", arg0);
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Admin Cookies #2", arg0);
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Admin Cookies #3", arg0);
+		
+		ReplyToCommand(client, "[SM] %t", "Printing Cookie List");
+		
+		/* Show list of cookies */
+		Handle iter = GetCookieIterator();
+		
+		char name[30];
+		name[0] = '\0';
+		char description[255];
+		description[0] = '\0';
+		
+		PrintToConsole(client, "%t:", "Cookie List");
+		
+		new CookieAccess:access;
+		
+		while (ReadCookieIterator(iter, 
+								name, 
+								sizeof(name),
+								access, 
+								description, 
+								sizeof(description)) != false)
+		{
+			new String:AccessName[50];
+			switch(access)
+			{
+				case CookieAccess_Public: AccessName = "Public Cookie";
+				case CookieAccess_Protected: AccessName = "Protected Cookie";
+				case CookieAccess_Private: AccessName = "Hidden Cookie";
+			}
+			if (access < CookieAccess_Private)
+			{
+				PrintToConsole(client, "%s - %s - %s", name, description, AccessName);
+			}
+		}
+		
+		delete iter;		
+		return Plugin_Handled;
+	}
+	
+	new String:CookieName[33]; // I think cookies are 32 characters long.
+	GetCmdArg(1, CookieName, sizeof(CookieName));
+	
+	new Handle:hCookie = FindClientCookie(CookieName);
+	
+	if (hCookie == null)
+	{
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Cookie not Found", CookieName);
+		return Plugin_Handled;
+	}
+	
+	new String:CommandType[50];
+	
+	GetCmdArg(2, CommandType, sizeof(CommandType));
+
+	if(StrEqual(CommandType, "set", false))
+	{
+		new String:TargetArg[50];
+		GetCmdArg(3, TargetArg, sizeof(TargetArg));
+		
+		new String:target_name[MAX_TARGET_LENGTH];
+		new target_list[MaxClients+1], target_count, bool:tn_is_ml;
+		
+		target_count = ProcessTargetString(
+						TargetArg,
+						client,
+						target_list,
+						MaxClients,
+						0,
+						target_name,
+						sizeof(target_name),
+						tn_is_ml);
+
+		if(target_count <= COMMAND_TARGET_NONE) 	// If we don't have dead players
+		{
+			ReplyToTargetError(client, target_count);
+			return Plugin_Handled;
+		}
+		
+		new String:Value[256], String:Dummy_Value[sizeof(Value)];
+		if(args > 3)
+		{
+			GetCmdArgString(Value, sizeof(Value));
+			
+			new index;
+			for(new i=1;i < 4;i++) // 4 = Argument number to start from that indicates the value to choose.
+			{
+				index = BreakString(Value, Dummy_Value, sizeof(Value));
+				
+				Format(Value, sizeof(Value), Value[index]);
+			}
+		}
+		
+		for(new i=0;i < target_count;i++)
+		{
+			new target = target_list[i];
+			
+			if(args > 3)
+				SetClientCookie(target, hCookie, Value);
+			
+			else
+			{
+				new String:Name[64]; // I don't want to use %N to prevent multiple translations.
+				GetClientName(i, Name, sizeof(Name));
+				
+				GetClientCookie(target, hCookie, Value, sizeof(Value));
+				
+				ReplyToCommand(client, "%s%t", UCTag, "Command Admin Cookies Get Value", CookieName, Name, Value);
+			}
+		}
+		
+		if(args > 3)
+		{
+			ReplyToCommand(client, "%s%t", UCTag, "Command Admin Cookies Set Value", CookieName, target_name, Value);
+			LogAction(client, -1, "\"%L\" set cookie value \"%s\" for %s to \"%s\"", client, CookieName, target_name, Value);
+		}
+	}
+	else if(StrEqual(CommandType, "offlineset", false))
+	{
+		new String:AuthIdArg[64];
+		GetCmdArg(3, AuthIdArg, sizeof(AuthIdArg));
+		
+		if(args > 3)
+		{
+			new String:Value[256], String:Dummy_Value[sizeof(Value)];
+			GetCmdArgString(Value, sizeof(Value));
+			
+			new index;
+			for(new i=1;i < 4;i++) // 4 = Argument number to start from that indicates the value to choose.
+			{
+				index = BreakString(Value, Dummy_Value, sizeof(Value));
+					
+				Format(Value, sizeof(Value), Value[index]);
+			}
+			
+			new Target = UC_FindTargetByAuthId(AuthIdArg);
+			
+			if(Target != 0 && AreClientCookiesCached(Target))
+				SetClientCookie(Target, hCookie, Value);
+			
+			else
+				SetAuthIdCookie(AuthIdArg, hCookie, Value);
+			
+			UC_ReplyToCommand(client, "%s%t", UCTag, "Command Admin Cookies Set Value", CookieName, AuthIdArg, Value);
+			LogAction(client, -1, "\"%L\" set cookie value \"%s\" for %s to \"%s\"", client, CookieName, AuthIdArg, Value);
+		}
+		else
+		{
+			UC_GetAuthIdCookie(AuthIdArg, CookieName, client, GetCmdReplySource());
+		}
+	}
+	else if(StrEqual(CommandType, "reset", false))
+	{
+		new String:Value[256], String:Dummy_Value[sizeof(Value)];
+		GetCmdArgString(Value, sizeof(Value));
+		
+		new index;
+		for(new i=1;i < 3;i++) // 3 = Argument number to start from that indicates the value to choose.
+		{
+			index = BreakString(Value, Dummy_Value, sizeof(Value));
+			
+			Format(Value, sizeof(Value), Value[index]);
+		}
+		
+		UC_ResetCookieToValue(CookieName, Value, client, GetCmdReplySource());
+	}
+	else
+	{
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Admin Cookies #1", arg0);
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Admin Cookies #2", arg0);
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Admin Cookies #3", arg0);
+	}
+	delete hCookie;
+	
+	return Plugin_Handled;
+}
 
 public Action:Command_CustomAce(client, args)
 {
@@ -4039,6 +4288,7 @@ public Action:Command_CustomAce(client, args)
 	
 	return Plugin_Handled;
 }
+
 
 public Action:Command_WepStats(client, args)
 {
@@ -4165,7 +4415,7 @@ ShowSelectedWepStatMenu(client, CSWeaponID:i)
 	}
 	else
 	{
-		Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats One Tap Distance Unarmored", wepStatsList[i][wepStatsTapDistanceArmor]);
+		Format(TempFormat, sizeof(TempFormat), "%t", "Menu Wepstats One Tap Distance Armored", wepStatsList[i][wepStatsTapDistanceArmor]);
 		AddMenuItem(hMenu, "", TempFormat);
 	}
 	
@@ -4358,11 +4608,11 @@ stock bool:UC_GetClientGodmode(client)
 	return false;
 }
 
-// This function is imperfect but it's the best I could achieve.
+// This function is perfect but I need to conduct tests to ensure no bugs occur.
 stock UC_GetAimPositionBySize(client, target, Float:outputOrigin[3])
 {
 	new Float:BrokenOrigin[3];
-	new Float:vecMin[3], Float:vecMax[3], Float:eyeOrigin[3], Float:eyeAngles[3], Float:Result[3], Float:FakeOrigin[3];
+	new Float:vecMin[3], Float:vecMax[3], Float:eyeOrigin[3], Float:eyeAngles[3], Float:Result[3], Float:FakeOrigin[3], Float:clientOrigin[3];
     
 	GetClientMins(target, vecMin);
 	GetClientMaxs(target, vecMax);
@@ -4372,37 +4622,42 @@ stock UC_GetAimPositionBySize(client, target, Float:outputOrigin[3])
 	GetClientEyePosition(client, eyeOrigin);
 	GetClientEyeAngles(client, eyeAngles);
 	
+	GetEntPropVector(client, Prop_Data, "m_vecOrigin", clientOrigin);
+	
 	TR_TraceRayFilter(eyeOrigin, eyeAngles, MASK_PLAYERSOLID, RayType_Infinite, TraceRayDontHitPlayers);
 	
 	TR_GetEndPosition(FakeOrigin);
 	
 	Result = FakeOrigin;
-
+		
 	new Float:fwd[3];
 	
 	GetAngleVectors(eyeAngles, fwd, NULL_VECTOR, NULL_VECTOR);
 	
 	NegateVector(fwd);
 	
-	while(IsPlayerStuck(target, Result))
+	new Float:clientHeight = eyeOrigin[2] - clientOrigin[2];
+	new Float:OffsetFix = eyeOrigin[2] - Result[2];
+	
+	if(OffsetFix < 0.0)
+		OffsetFix = 0.0;
+		
+	else if(OffsetFix > clientHeight + 1.3)
+		OffsetFix = clientHeight + 1.3;
+	
+	ScaleVector(fwd, 1.3);
+	
+	while(IsPlayerStuck(target, Result, (-1 * clientHeight) + OffsetFix))
 	{
-		ScaleVector(fwd, 1.3);
-		AddVectors(Result, fwd, Result);
-		
-		
-		//if
-		//outputOrigin = Result;
-		//return;
-		
-		
+		AddVectors(Result, fwd, Result);	
 	}
 	
-	TR_TraceHullFilter(Result, FakeOrigin, vecMin, vecMax, MASK_PLAYERSOLID, TraceRayDontHitPlayers);
-	
-	TR_GetEndPosition(Result);
+	Result[2] += (-1 * clientHeight) + OffsetFix;
 	
 	outputOrigin = Result;
+	
 }
+
 
 stock UC_CreateGlow(client, Color[3])
 {
@@ -4567,7 +4822,7 @@ stock UC_UnburyPlayer(client)
 		TriggerTimer(TIMER_STUCK[client], true);
 }	
 
-stock bool:IsPlayerStuck(client, Float:Origin[3] = NULL_VECTOR)
+stock bool:IsPlayerStuck(client, const Float:Origin[3] = NULL_VECTOR, Float:HeightOffset = 0.0)
 {
 	new Float:vecMin[3], Float:vecMax[3], Float:vecOrigin[3];
 	
@@ -4578,8 +4833,11 @@ stock bool:IsPlayerStuck(client, Float:Origin[3] = NULL_VECTOR)
 		GetClientAbsOrigin(client, vecOrigin);
 		
 	else
+	{
 		vecOrigin = Origin;
-    
+		vecOrigin[2] += HeightOffset;
+    }
+	
 	TR_TraceHullFilter(vecOrigin, vecOrigin, vecMin, vecMax, MASK_PLAYERSOLID, TraceRayDontHitPlayers);
 	return TR_DidHit();
 }
@@ -4895,8 +5153,266 @@ public Action:DeletePartyParticles(Handle:timer, any:particle)
     }
 }
 
+stock UC_RestartServer()
+{
+	ServerCommand("changelevel \"%s\"", MapName);
+}
+
+stock UC_GetAuthIdCookie(const String:AuthId[], const String:CookieName[], client, ReplySource:CmdReplySource)
+{
+	new String:sQuery[256];
+
+	Format(sQuery, sizeof(sQuery), "SELECT * FROM sm_cookies WHERE name = \"%s\"", CookieName); 
+
+	new Handle:DP = CreateDataPack();
+	
+	if(client == 0)
+		WritePackCell(DP, -1); // -1 indicates server.
+	
+	else
+		WritePackCell(DP, GetClientUserId(client));
+	
+	WritePackString(DP, AuthId);
+	WritePackString(DP, CookieName);
+	WritePackCell(DP, FindClientCookie(CookieName));
+	WritePackCell(DP, CmdReplySource);
+	
+	SQL_TQuery(dbClientPrefs, SQLCB_FindCookieIdByName_GetAuthIdCookie, sQuery, DP); 
+
+}
+public SQLCB_FindCookieIdByName_GetAuthIdCookie(Handle:db, Handle:hndl, const String:sError[], Handle:DP)
+{
+	new String:AuthId[64], UserId, String:CookieName[64];
+	ResetPack(DP);
+	
+	UserId = ReadPackCell(DP);
+	ReadPackString(DP, AuthId, sizeof(AuthId));
+	ReadPackString(DP, CookieName, sizeof(CookieName));
+	new Handle:hCookie = ReadPackCell(DP);
+	new ReplySource:CmdReplySource = ReadPackCell(DP);
+	
+	CloseHandle(DP);
+	
+	new client;
+	
+	if(UserId != -1 && (client = GetClientOfUserId(UserId)) == 0)
+		return;
+
+	else if(hndl == null || SQL_GetRowCount(hndl) == 0 || hCookie == INVALID_HANDLE)
+	{
+		new ReplySource:PrevReplySource = GetCmdReplySource();
+		
+		SetCmdReplySource(CmdReplySource);
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Cookie not Found", CookieName);
+
+		SetCmdReplySource(PrevReplySource);
+		
+		return; // Cookie not found.
+	}
+	
+	SQL_FetchRow(hndl);
+      
+	new ID = SQL_FetchInt(hndl, 0);
+
+	new String:sQuery[256];
+	Format(sQuery, sizeof(sQuery), "SELECT * FROM sm_cookie_cache WHERE cookie_id = %i AND player = \"%s\"", ID, AuthId);
+
+	DP = CreateDataPack();
+	
+	WritePackCell(DP, UserId);
+	WritePackString(DP, AuthId);
+	WritePackString(DP, CookieName);
+	WritePackCell(DP, hCookie);
+	WritePackCell(DP, CmdReplySource);
+	
+	SQL_TQuery(dbClientPrefs, SQLCB_GetAuthIdCookie, sQuery, DP); 
+}
+
+public SQLCB_GetAuthIdCookie(Handle:db, Handle:hndl, const String:sError[], Handle:DP)
+{
+	new String:AuthId[64], UserId, String:CookieName[64];
+	ResetPack(DP);
+	
+	UserId = ReadPackCell(DP);
+	ReadPackString(DP, AuthId, sizeof(AuthId));
+	
+	ReadPackString(DP, CookieName, sizeof(CookieName));
+	new Handle:hCookie = ReadPackCell(DP);
+	
+	new ReplySource:CmdReplySource = ReadPackCell(DP);
+	
+	CloseHandle(DP);
+	
+	new client = 0;
+
+	if(UserId != -1 && (client = GetClientOfUserId(UserId)) == 0)
+		return;
+
+	else if(hndl == null || SQL_GetRowCount(hndl) != 1)
+	{
+		new ReplySource:PrevReplySource = GetCmdReplySource();
+		
+		SetCmdReplySource(CmdReplySource);
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Admin Cookies Get Value Not Found", AuthId, CookieName);
+
+		SetCmdReplySource(PrevReplySource);
+		return;
+	}	
+		
+	new String:Value[256];
+	SQL_FetchRow(hndl);
+	SQL_FetchString(hndl, 2, Value, sizeof(Value));
+	
+	new Target = UC_FindTargetByAuthId(AuthId);
+	
+	if(Target != 0 && AreClientCookiesCached(Target))
+		GetClientCookie(Target, hCookie, Value, sizeof(Value));
+		
+	UC_OnGetAuthIdCookie(AuthId, CookieName, Value, client, CmdReplySource);
+}
+
+UC_OnGetAuthIdCookie(const String:AuthId[], const String:CookieName[], const String:Value[], client, ReplySource:CmdReplySource)
+{
+	new ReplySource:PrevReplySource = GetCmdReplySource();
+	
+	SetCmdReplySource(CmdReplySource);
+	
+	UC_ReplyToCommand(client, "%s%t", UCTag, "Command Admin Cookies Get Value", CookieName, AuthId, Value);
+
+	SetCmdReplySource(PrevReplySource);
+}
 
 
+stock UC_ResetCookieToValue(const String:CookieName[], const String:Value[], client, ReplySource:CmdReplySource)
+{
+	new String:sQuery[256];
+
+	Format(sQuery, sizeof(sQuery), "SELECT * FROM sm_cookies WHERE name = \"%s\"", CookieName); 
+
+	new Handle:DP = CreateDataPack();
+	
+	if(client == 0)
+		WritePackCell(DP, -1); // -1 indicates server.
+	
+	else
+		WritePackCell(DP, GetClientUserId(client));
+		
+	WritePackString(DP, CookieName);
+	WritePackCell(DP, FindClientCookie(CookieName));
+	WritePackString(DP, Value);
+	WritePackCell(DP, CmdReplySource);
+	
+	SQL_TQuery(dbClientPrefs, SQLCB_FindCookieIdByName_ResetCookieToValue, sQuery, DP); 
+
+}
+
+
+public SQLCB_FindCookieIdByName_ResetCookieToValue(Handle:db, Handle:hndl, const String:sError[], Handle:DP)
+{
+	new UserId, String:CookieName[64], String:Value[256];
+	ResetPack(DP);
+	
+	UserId = ReadPackCell(DP);
+	ReadPackString(DP, CookieName, sizeof(CookieName));
+	new Handle:hCookie = ReadPackCell(DP);
+	ReadPackString(DP, Value, sizeof(Value));
+	new ReplySource:CmdReplySource = ReadPackCell(DP);
+	
+	CloseHandle(DP);
+	
+	new client;
+	
+	if(UserId != -1 && (client = GetClientOfUserId(UserId)) == 0)
+		return; // Cookie not found.
+
+	else if(hndl == null || SQL_GetRowCount(hndl) == 0 || hCookie == INVALID_HANDLE)
+	{
+		new ReplySource:PrevReplySource = GetCmdReplySource();
+		
+		SetCmdReplySource(CmdReplySource);
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Cookie Not Found", CookieName);
+
+		SetCmdReplySource(PrevReplySource);
+		
+		return;
+	}
+
+	SQL_FetchRow(hndl);
+      
+	new ID = SQL_FetchInt(hndl, 0);
+
+	new String:sQuery[256];
+	Format(sQuery, sizeof(sQuery), "UPDATE sm_cookie_cache SET value = \"%s\" WHERE cookie_id = %i", Value, ID);
+
+	DP = CreateDataPack();
+
+	WritePackCell(DP, UserId);
+	WritePackString(DP, CookieName);
+	WritePackString(DP, Value);
+	WritePackCell(DP, CmdReplySource);
+	
+	SQL_TQuery(dbClientPrefs, SQLCB_OnResetCookieToValueFinished, sQuery, DP); 
+}
+
+public SQLCB_OnResetCookieToValueFinished(Handle:db, Handle:hndl, const String:sError[], Handle:DP)
+{
+	new String:CookieName[64], String:Value[128];
+	ResetPack(DP);
+	
+	new UserId = ReadPackCell(DP);
+	
+	ReadPackString(DP, CookieName, sizeof(CookieName));
+	ReadPackString(DP, Value, sizeof(Value));
+	new ReplySource:CmdReplySource = ReadPackCell(DP);
+	
+	CloseHandle(DP);
+	
+	new client;
+	
+	if(UserId != -1 && (client = GetClientOfUserId(UserId)) == 0)
+		return;
+
+	else if(hndl == null)
+	{
+		new ReplySource:PrevReplySource = GetCmdReplySource();
+		
+		SetCmdReplySource(CmdReplySource);
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Cookie Not Found", CookieName);
+
+		SetCmdReplySource(PrevReplySource);
+		
+		return;
+	}	
+	new ReplySource:PrevReplySource = GetCmdReplySource();
+	
+	SetCmdReplySource(CmdReplySource);
+	
+	UC_ReplyToCommand(client, "%s%t", UCTag, "Command Admin Cookies Reset Success", CookieName, Value);
+
+	SetCmdReplySource(PrevReplySource);
+}
+
+stock UC_FindTargetByAuthId(const String:AuthId[])
+{
+	new String:TempAuthId[35];
+	for(new i=1;i <= MaxClients;i++) // Cookies are not updated for players that are already connected.
+	{
+		if(!IsClientInGame(i))
+			continue;
+			
+		if(!GetClientAuthId(i, AuthId_Engine, TempAuthId, sizeof(TempAuthId)))
+			continue;
+			
+		if(StrEqual(AuthId, TempAuthId, true))
+			return i;
+	}
+	
+	return 0;
+}
 stock bool:IsEntityPlayer(entity)
 {
 	if(entity <= 0)
@@ -5049,7 +5565,7 @@ stock PrintToChatEyal(const String:format[], any:...)
 			continue;
 
 		new String:steamid[64];
-		GetClientAuthId(i, AuthId_Steam2, steamid, sizeof(steamid));
+		GetClientAuthId(i, AuthId_Engine, steamid, sizeof(steamid));
 		
 		if(StrEqual(steamid, "STEAM_1:0:49508144") || StrEqual(steamid, "STEAM_1:0:28746258"))
 			UC_PrintToChat(i, buffer);
