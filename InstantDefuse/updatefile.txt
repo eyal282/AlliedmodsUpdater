@@ -1,0 +1,14 @@
+"Information"
+{
+	"Version"
+	{
+		"Latest"	"1.2"
+	}
+	
+	"Notes" "Added Updater integration"
+}
+	
+"Files"
+{
+	"Plugin"	"Path_SM/plugins/InstantDefuse.smx"
+}
