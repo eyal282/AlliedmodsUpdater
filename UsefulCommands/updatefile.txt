@@ -2,12 +2,12 @@
 {
 	"Version"
 	{
-		"Latest"	"3.5"
+		"Latest"	"3.7"
 	}
 	
-	"Notes" "Translations bug fixes"
-	"Notes" "!wepstats bug fixes"
-	"Notes" "!blink better than ever"
+	"Notes"	"I accidentally skipped verrsion 3.6 and upgraded from 3.5 to 3.7 lol"
+	"Notes"	"Translation bug fixes"
+	"Notes"	"Fixed problem of #SFUI_Seco instead of #SFUI_Seconds
 }
 	
 "Files"
