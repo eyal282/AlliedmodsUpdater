@@ -33,7 +33,7 @@
 
 //#define TEST
 
-new const String:PLUGIN_VERSION[] = "3.6";
+new const String:PLUGIN_VERSION[] = "3.7";
 
 public Plugin:myinfo = 
 {
@@ -291,8 +291,11 @@ public Native_GetWeaponStatsList(Handle:caller, numParams)
 
 public OnPluginStart()
 {
-
+	#if defined _autoexecconfig_included
+	
 	AutoExecConfig_SetFile("UsefulCommands");
+	
+	#endif
 	
 	Trie_UCCommands = CreateTrie();
 	
@@ -2626,22 +2629,27 @@ public Action:Command_Give(client, args)
 	for(new count=0;count < target_count;count++)
 	{
 		new target = target_list[count];
-		
 
 		if(StrEqual(arg2, "weapon_c4"))
 		{
 			if(GetClientTeam(target) == CS_TEAM_CT)
 			{
-				SetEntProp(target, Prop_Send, "m_iTeamNum", CS_TEAM_T);
+				new OldValue = GetConVarInt(hcv_mpAnyoneCanPickupC4);
+				
+				SetConVarBool(hcv_mpAnyoneCanPickupC4, true);
+				
+				SetEntProp(target, Prop_Data, "m_iTeamNum", CS_TEAM_T);
 				
 				weapon = GivePlayerItem(target, arg2);
 				
-				SetEntProp(target, Prop_Send, "m_iTeamNum", CS_TEAM_CT);
+				SetEntProp(target, Prop_Data, "m_iTeamNum", CS_TEAM_CT);
+				
+				SetConVarInt(hcv_mpAnyoneCanPickupC4, OldValue);
 			}
 			else
 				weapon = GivePlayerItem(target, arg2);
 		}
-		else if(StrEqual(arg2, "weapon_defuser"))
+		else if(StrEqual(arg2, "weapon_defuse", false) || StrEqual(arg2, "weapon_defuser", false) || StrEqual(arg2, "weapon_kit", false))
 		{
 			arg2 = "item_defuser";
 			
@@ -2690,7 +2698,7 @@ public Action:Command_RestartRound(client, args)
 	}
 	
 	new Float:SecondsBeforeRestart;
-	new String:Arg[11];
+	new String:Arg[15];
 	if(args > 0)
 	{
 		GetCmdArg(1, Arg, sizeof(Arg));
