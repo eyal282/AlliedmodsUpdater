@@ -2,12 +2,11 @@
 {
 	"Version"
 	{
-		"Latest"	"3.7"
+		"Latest"	"3.8"
 	}
 	
-	"Notes"	"I accidentally skipped version 3.6 and upgraded from 3.5 to 3.7 lol"
-	"Notes"	"Translation bug fixes"
-	"Notes"	"Fixed problem of #SFUI_Seco instead of #SFUI_Seconds
+	"Notes"	"New syntax for wepstats: !wepstats [classname], classname is optional for faster finding"
+	"Notes" "I have to temporarily lie that the version is 3.8 to force update due to some mistake. Version is actually 3.7 right now."
 }
 	
 "Files"
