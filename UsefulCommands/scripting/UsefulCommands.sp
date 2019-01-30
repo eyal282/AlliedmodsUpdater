@@ -1,11 +1,25 @@
 // To do: Add weapon stats comparison based on what I used with Big Bertha
 
 #include <sourcemod>
-
 #include <sdkhooks>
 #include <sdktools>
 #include <cstrike>
 #include <clientprefs>
+
+#undef REQUIRE_PLUGIN
+#tryinclude <updater>  // Comment out this line to remove updater support by force.
+#tryinclude <autoexecconfig>
+
+new const String:PLUGIN_VERSION[] = "3.7";
+
+public Plugin:myinfo = 
+{
+	name = "Useful commands",
+	author = "Eyal282",
+	description = "Useful commands.",
+	version = PLUGIN_VERSION,
+	url = "https://forums.alliedmods.net/showthread.php?p=2617618"
+}
 
 #define MAX_INTEGER 2147483647
 #define MIN_FLOAT -2147483647.0 // I think -2147483648 is lowest but meh, same thing.
@@ -25,24 +39,9 @@
 
 #define GAME_RULES_CVARS_PATH "gamerulescvars.txt"
 
-#undef REQUIRE_PLUGIN
-#tryinclude <updater>  // Comment out this line to remove updater support by force.
-#tryinclude <autoexecconfig>
-
 #define UPDATE_URL    "https://raw.githubusercontent.com/eyal282/AlliedmodsUpdater/master/UsefulCommands/updatefile.txt"
 
 //#define TEST
-
-new const String:PLUGIN_VERSION[] = "3.7";
-
-public Plugin:myinfo = 
-{
-	name = "Useful commands",
-	author = "Eyal282",
-	description = "Useful commands.",
-	version = PLUGIN_VERSION,
-	url = "https://forums.alliedmods.net/showthread.php?p=2617618"
-}
 
 #define COMMAND_FILTER_NONE 0
 
@@ -199,6 +198,8 @@ new bool:UCEdit[MAXPLAYERS+1];
 
 new ClientGlow[MAXPLAYERS+1];
 
+new RoundKills[MAXPLAYERS+1];
+
 new bool:isHugged[MAXPLAYERS+1];
 
 new EngineVersion:GameName;
@@ -291,6 +292,8 @@ public Native_GetWeaponStatsList(Handle:caller, numParams)
 
 public OnPluginStart()
 {
+	GameName = GetEngineVersion();
+	
 	#if defined _autoexecconfig_included
 	
 	AutoExecConfig_SetFile("UsefulCommands");
@@ -303,15 +306,29 @@ public OnPluginStart()
 	LoadTranslations("common.phrases");
 	LoadTranslations("clientprefs.phrases");
 	
-	fw_ucAce = CreateGlobalForward("UsefulCommands_OnPlayerAce", ET_Event, Param_CellByRef, Param_String);
-	fw_ucAcePost = CreateGlobalForward("UsefulCommands_OnPlayerAcePost", ET_Ignore, Param_Cell, Param_String);
+	fw_ucAce = CreateGlobalForward("UsefulCommands_OnPlayerAce", ET_Event, Param_CellByRef, Param_String, Param_CellByRef);
+	fw_ucAcePost = CreateGlobalForward("UsefulCommands_OnPlayerAcePost", ET_Ignore, Param_Cell, Param_String, Param_Cell);
 	fw_ucWeaponStatsRetrievedPost = CreateGlobalForward("UsefulCommands_OnWeaponStatsRetrievedPost", ET_Ignore);
 	
-	// public UsefulCommands_OnPlayerAce(&client, String:FunFact[])
-	// public UsefulCommands_OnPlayerAcePost(client, const String:FunFact[])
+	// public UsefulCommands_OnPlayerAce(&client, String:FunFact[], Kills)
+	
+	// param &client = Client that made an ace.
+	// param String:FunFact[] = Copyback fun fact for the client.
+	// param Kills = Amount of kills the client made in the round.
+	
+	// return = Plugin_Changed when changing a parameter, Plugin_Handled to block fun fact change, Plugin_Stop to stop both fun fact change and the post forward.
+	// Note: this forward may call more than once during a single ace.
+	
+	// public UsefulCommands_OnPlayerAcePost(client, const String:FunFact[], Kills)
+	// param &client = Client that made an ace.
+	// param String:FunFact[] = Copyback fun fact for the client.
+	// param Kills = Amount of kills the client made in the round.
+	
+	// return = No return.
+	// Note: Although the pre ace forward may call more than once in a single ace, this forward will only call once per ace.
 	
 	// public UsefulCommands_OnWeaponStatsRetrievedPost()
-	GameName = GetEngineVersion();
+
 	
 	//hcv_svCheats = FindConVar("sv_cheats");
 	
@@ -324,6 +341,7 @@ public OnPluginStart()
 	hcv_ucAcePriority = UC_CreateConVar("uc_ace_priority", "2", "Prioritize Ace over all other fun facts of a round's end and print a message when a player makes an ace. Set to 2 if you want players to have a custom fun fact on ace.");
 	hcv_ucReviveOnTeamChange = UC_CreateConVar("uc_revive_on_team_change", "1", "Revive the player when an admin sets his team.");
 	hcv_ucRestartRoundOnMapStart = UC_CreateConVar("uc_restart_round_on_map_start", "1", "Restart the round when the map starts to block bug where round_start is never called on the first round.");
+	hcv_ucAnnouncePlugin = UC_CreateConVar("uc_announce_plugin", "36.5", "Announces to joining players that the best utility plugin is running, this cvar's value when after a player joins he'll get the message. 0 to disable.");
 	
 	GetConVarString(hcv_ucTag, UCTag, sizeof(UCTag));
 	HookConVarChange(hcv_ucTag, hcvChange_ucTag);
@@ -338,8 +356,6 @@ public OnPluginStart()
 		hcv_ucPacketNotifyCvars = UC_CreateConVar("uc_packet_notify_cvars", "2", "If 2, acts like 1 but also deletes the gamerulescvars.txt file before doing it. If 1, UC will put all FCVAR_NOTIFY cvars in gamerulescvars.txt", FCVAR_NOTIFY);
 		
 		hcv_ucGlowType = UC_CreateConVar("uc_glow_type", "1", "0 = Wallhack, 1 = Fullbody, 2 = Surround Player, 3 = Blinking and Surround Player");
-		
-		hcv_ucAnnouncePlugin = UC_CreateConVar("uc_announce_plugin", "36.5", "Announces to joining players that the best utility plugin is running, this cvar's value when after a player joins he'll get the message. 0 to disable.");
 	
 		HookConVarChange(hcv_ucTeleportBomb, OnTeleportBombChanged);
 				
@@ -367,10 +383,8 @@ public OnPluginStart()
 	}
 	#endif
 	
-
 	if(isLateLoaded)
 	{
-
 		for(new i=1;i <= MaxClients;i++)
 		{	
 			if(!IsClientInGame(i))
@@ -580,6 +594,9 @@ public OnAllPluginsLoaded()
 	AutoExecConfig_CleanFile();
 	
 	#endif
+	
+		
+	LogError("%i", hcv_PartyMode);
 }
 
 public hcvChange_ucTag(Handle:convar, const String:oldValue[], const String:newValue[])
@@ -749,7 +766,8 @@ public OnConfigsExecuted()
 		
 		CloseHandle(SortArray);
 	}	
-	SetConVarInt(hcv_mpAnyoneCanPickupC4, GetConVarInt(hcv_ucSpecialC4Rules));
+	if(GetConVarBool(hcv_ucSpecialC4Rules))
+		SetConVarBool(hcv_mpAnyoneCanPickupC4, true);
 	
 	new KeyValues:keyValues = CreateKeyValues("items_game")
 	
@@ -1170,16 +1188,7 @@ public Action:Event_PlayerUse(Handle:hEvent, const String:Name[], bool:dontBroad
 	
 	AcceptEntityInput(entity, "Kill");
 	
-	if(GetClientTeam(client) == CS_TEAM_CT)
-	{
-		SetEntProp(client, Prop_Send, "m_iTeamNum", CS_TEAM_T);
-				
-		GivePlayerItem(client, "weapon_c4");
-				
-		SetEntProp(client, Prop_Send, "m_iTeamNum", CS_TEAM_CT);
-	}
-	else
-		GivePlayerItem(client, "weapon_c4");
+	GivePlayerItem(client, "weapon_c4");
 	
 	/*
 	
@@ -1258,6 +1267,7 @@ public Action:Event_RoundStart(Handle:hEvent, const String:Name[], bool:dontBroa
 			continue;
 			
 		TrueTeam[i] = 0;
+		RoundKills[i] = 0;
 	}
 	AceSent = false;
 	RoundNumber++;
@@ -1502,6 +1512,8 @@ public PartyModeMenu_Handler(Handle:hMenu, MenuAction:action, client, item)
 public Action:Event_PlayerSpawn(Handle:hEvent, const String:Name[], bool:dontBroadcast)
 {	
 	new client = GetClientOfUserId(GetEventInt(hEvent, "userid"));
+	
+	RoundKills[client] = 0;
 
 	UberSlapped[client] = false;
 	RequestFrame(ResetTrueTeam, GetClientUserId(client));
@@ -1530,6 +1542,8 @@ public Action:Event_PlayerDeath(Handle:hEvent, const String:Name[], bool:dontBro
 		
 	new attackerUserId = GetEventInt(hEvent, "attacker");
 	new attacker = GetClientOfUserId(attackerUserId);
+	
+	RoundKills[attacker]++;
 	
 	new Team = GetClientTrueTeam(client);
 	
@@ -1685,7 +1699,7 @@ public Action:Event_CsWinPanelRound(Handle:hEvent, const String:Name[], bool:don
 
 	new Winner = GetClientOfUserId(AceCandidate[WinningTeam]);
 	
-	if(Winner == 0)
+	if(Winner == 0 || RoundKills[Winner] == 0)
 		return Plugin_Continue;
 	
 	for(new i=1;i <= MaxClients;i++)
@@ -1706,11 +1720,12 @@ public Action:Event_CsWinPanelRound(Handle:hEvent, const String:Name[], bool:don
 	GetClientAceFunFact(Winner, TokenToUse, sizeof(TokenToUse));
 	Call_PushCellRef(Winner);
 	Call_PushStringEx(TokenToUse, sizeof(TokenToUse), SM_PARAM_STRING_COPY|SM_PARAM_STRING_UTF8, SM_PARAM_COPYBACK);
+	Call_PushCellRef(RoundKills[Winner]);
 	
 	new Action:Result;
 	Call_Finish(Result);
 	
-	if(Result >= Plugin_Changed)
+	if(Result == Plugin_Stop)
 		return Plugin_Continue;
 	
 	if(Result != Plugin_Changed)
@@ -1718,17 +1733,19 @@ public Action:Event_CsWinPanelRound(Handle:hEvent, const String:Name[], bool:don
 		Winner = GetClientOfUserId(AceCandidate[WinningTeam]);
 		GetClientAceFunFact(Winner, TokenToUse, sizeof(TokenToUse));
 	}
+	
+	if(Result != Plugin_Handled)
+	{
+		SetEventInt(hEvent, "funfact_player", Winner);
 		
-	SetEventInt(hEvent, "funfact_player", Winner);
-	
-	SetEventString(hEvent, "funfact_token", TokenToUse);
-	
-	if(isCSGO())
-		SetEventInt(hEvent, "funfact_data1", 420); // The percent of players killed ( in theory always 100 in ace but !revive can push it further. )
-	
-	else
-		SetEventInt(hEvent, "funfact_data1", 100); // The percent of players killed ( in theory always 100 in ace but !revive can push it further. )
-	
+		SetEventString(hEvent, "funfact_token", TokenToUse);
+		
+		if(isCSGO())
+			SetEventInt(hEvent, "funfact_data1", 420); // The percent of players killed ( in theory always 100 in ace but !revive can push it further. )
+		
+		else
+			SetEventInt(hEvent, "funfact_data1", 100); // The percent of players killed ( in theory always 100 in ace but !revive can push it further. )
+	}
 	if(!AceSent)
 	{
 		AceSent = true;
@@ -1737,6 +1754,7 @@ public Action:Event_CsWinPanelRound(Handle:hEvent, const String:Name[], bool:don
 		
 		Call_PushCell(Winner);
 		Call_PushString(TokenToUse);
+		Call_PushCell(RoundKills[Winner]);
 		
 		Call_Finish();
 	}
@@ -2605,7 +2623,9 @@ public Action:Command_Give(client, args)
 	else
 		Format(WeaponName, sizeof(WeaponName), arg2);
 	
-	for(new a=0;a < strlen(WeaponName);a++)
+	new length = strlen(WeaponName);
+	
+	for(new a=0;a < length;a++)
 	{
 		WeaponName[a] = CharToLower(WeaponName[a]);
 		
@@ -2630,26 +2650,7 @@ public Action:Command_Give(client, args)
 	{
 		new target = target_list[count];
 
-		if(StrEqual(arg2, "weapon_c4"))
-		{
-			if(GetClientTeam(target) == CS_TEAM_CT)
-			{
-				new OldValue = GetConVarInt(hcv_mpAnyoneCanPickupC4);
-				
-				SetConVarBool(hcv_mpAnyoneCanPickupC4, true);
-				
-				SetEntProp(target, Prop_Data, "m_iTeamNum", CS_TEAM_T);
-				
-				weapon = GivePlayerItem(target, arg2);
-				
-				SetEntProp(target, Prop_Data, "m_iTeamNum", CS_TEAM_CT);
-				
-				SetConVarInt(hcv_mpAnyoneCanPickupC4, OldValue);
-			}
-			else
-				weapon = GivePlayerItem(target, arg2);
-		}
-		else if(StrEqual(arg2, "weapon_defuse", false) || StrEqual(arg2, "weapon_defuser", false) || StrEqual(arg2, "weapon_kit", false))
+		if(StrEqual(arg2, "weapon_defuse", false) || StrEqual(arg2, "weapon_defuser", false) || StrEqual(arg2, "weapon_kit", false))
 		{
 			arg2 = "item_defuser";
 			
@@ -2658,8 +2659,6 @@ public Action:Command_Give(client, args)
 		else if((weapon = GivePlayerItem(target, arg2)) == -1)
 		{
 			UC_ReplyToCommand(client, "%s%t", UCTag, "Command Give Invalid Weapon", WeaponName);
-			
-			RemovePlayerItem(target, weapon);
 			
 			return Plugin_Handled;
 		}
@@ -2670,23 +2669,78 @@ public Action:Command_Give(client, args)
 			
 			AcceptEntityInput(weapon, "Kill");
 		}
-		weapon = CreateEntityByName("game_player_equip");
-	
-		DispatchKeyValue(weapon, arg2, "1");
 		
-		DispatchKeyValue(weapon, "spawnflags", "1");
+		if(StrEqual(arg2, "weapon_c4"))
+		{
+			if(GetClientTeam(target) == CS_TEAM_CT)
+			{	
+				
+				if(isCSGO())
+				{
+					new String:OldValue[32];
+					GetConVarString(hcv_mpAnyoneCanPickupC4, OldValue, sizeof(OldValue));
+					
+					if(!GetConVarBool(hcv_mpAnyoneCanPickupC4))
+					{
+						SetConVarString(hcv_mpAnyoneCanPickupC4, "1UsefulCommands1");
+					
+						new Handle:DP = CreateDataPack();
+						
+						WritePackCell(DP, target);
+						WritePackString(DP, OldValue);
+						RequestFrame(EquipBombToPlayer, DP);
+					}
+					else
+						GivePlayerItem(target, "weapon_c4");
+				}
+				else
+				{
+				
+					SetEntProp(target, Prop_Send, "m_iTeamNum", CS_TEAM_T);
+					
+					GivePlayerItem(target, "weapon_c4");
+					
+					SetEntProp(target, Prop_Send, "m_iTeamNum", CS_TEAM_CT);
+				}
+			}
+			else
+				weapon = GivePlayerItem(target, arg2);
+		}
+		else
+		{
+			weapon = CreateEntityByName("game_player_equip");
 		
-		AcceptEntityInput(weapon, "use", target);
-		
-		AcceptEntityInput(weapon, "Kill");
-		
-		weapon = -1;
+			DispatchKeyValue(weapon, arg2, "1");
+			
+			DispatchKeyValue(weapon, "spawnflags", "1");
+			
+			AcceptEntityInput(weapon, "use", target);
+			
+			AcceptEntityInput(weapon, "Kill");
+			
+			weapon = -1;
+		}
 		
 	}
 	
 	UC_ShowActivity2(client, UCTag, "%t", "Player Given Weapon", WeaponName, target_name); 
 
 	return Plugin_Handled;
+}
+
+public EquipBombToPlayer(Handle:DP)
+{
+	ResetPack(DP);
+	
+	new target = ReadPackCell(DP);
+	
+	new String:OldValue[32];
+	ReadPackString(DP, OldValue, sizeof(OldValue));
+	
+	CloseHandle(DP);
+	GivePlayerItem(target, "weapon_c4");
+	
+	SetConVarString(hcv_mpAnyoneCanPickupC4, OldValue);
 }
 
 public Action:Command_RestartRound(client, args)
@@ -2716,13 +2770,27 @@ public Action:Command_RestartRound(client, args)
 		new String:strSecondsBeforeRestart[11];
 		IntToString(iSecondsBeforeRestart, strSecondsBeforeRestart, sizeof(strSecondsBeforeRestart));
 		
-		if(iSecondsBeforeRestart == 1)
-			Format(Arg, sizeof(Arg), "#SFUI_Seconds");
-			
-		else 
-			Format(Arg, sizeof(Arg), "#SFUI_Second");
-			
-		UC_PrintCenterTextAll("#SFUI_Notice_Game_will_restart_in", strSecondsBeforeRestart, Arg);
+		switch(isCSGO())
+		{
+			case true:
+			{
+				if(iSecondsBeforeRestart == 1)
+					Format(Arg, sizeof(Arg), "#SFUI_Second");
+					
+				else 
+					Format(Arg, sizeof(Arg), "#SFUI_Seconds");
+			}
+			case false:
+			{
+				if(iSecondsBeforeRestart == 1)
+					Format(Arg, sizeof(Arg), "SECOND"); // It won't even translate the word "seconds" lmao.
+					
+				else 
+					Format(Arg, sizeof(Arg), "SECONDS");
+			}
+		}	
+		
+		UC_PrintCenterTextAll("#Game_will_restart_in", strSecondsBeforeRestart, Arg);
 	
 		if(iSecondsBeforeRestart == 1)
 			Format(Arg, sizeof(Arg), "Second");
@@ -3918,7 +3986,7 @@ public LastConnected_MenuHandler(Handle:hMenu, MenuAction:action, client, item)
 		FormatTime(Date, sizeof(Date), "%d/%m/%Y - %H:%M:%S", LastConnect);
 		
 		UC_PrintToChat(client, "%s%t", UCTag, "Command Last Name SteamID", Name, AuthId);
-		UC_PrintToChat(client, "%s%t", UCTag, "Command Last IP Last Disconnect", IPAddress, Date);
+		UC_PrintToChat(client, "%t", "Command Last IP Last Disconnect", IPAddress, Date); // Rarely but still, I won't use the UC tag to show continuity. 
 		PrintToConsole(client, "\n%t", "Command Last Console Full", Name, AuthId, IPAddress, Date);
 		
 		Command_Last(client, 0);
@@ -4300,41 +4368,58 @@ public Action:Command_CustomAce(client, args)
 
 public Action:Command_WepStats(client, args)
 {
-	new Handle:hMenu = CreateMenu(WepStatsMenu_Handler);
-	
-	new CSWeaponID:i;
-	new String:WeaponID[20], String:Alias[20];
-	for(i = CSWeapon_NONE;i < CSWeapon_MAX_WEAPONS_NO_KNIFES;i++)
+	if(args == 0)
 	{
-		if(!CS_IsValidWeaponID(i))
-			continue;
-			
-		if(!CS_WeaponIDToAlias(i, Alias, sizeof(Alias)))
-			continue;
+		new Handle:hMenu = CreateMenu(WepStatsMenu_Handler);
 		
-		new bool:Ignore = false;
-		for(new a=0;a < sizeof(wepStatsIgnore);a++)
+		new CSWeaponID:i;
+		new String:WeaponID[20], String:Alias[20];
+		for(i = CSWeapon_NONE;i < CSWeapon_MAX_WEAPONS_NO_KNIFES;i++)
 		{
-			if(i == wepStatsIgnore[a])
-			{
-				a = sizeof(wepStatsIgnore);
-				Ignore = true;
-			}
-		}
-		
-		if(Ignore)
-			continue;
+			if(!CS_IsValidWeaponID(i))
+				continue;
+				
+			if(!CS_WeaponIDToAlias(i, Alias, sizeof(Alias)))
+				continue;
 			
-		IntToString(view_as<int>(i), WeaponID, sizeof(WeaponID));
-		
-		UC_StringToUpper(Alias);
-		
-		AddMenuItem(hMenu, WeaponID, Alias);	
-	}
+			new bool:Ignore = false;
+			for(new a=0;a < sizeof(wepStatsIgnore);a++)
+			{
+				if(i == wepStatsIgnore[a])
+				{
+					a = sizeof(wepStatsIgnore);
+					Ignore = true;
+				}
+			}
+			
+			if(Ignore)
+				continue;
+				
+			IntToString(view_as<int>(i), WeaponID, sizeof(WeaponID));
+			
+			UC_StringToUpper(Alias);
+			
+			AddMenuItem(hMenu, WeaponID, Alias);	
+		}
 
-	SetMenuTitle(hMenu, "%t", "Menu Wepstats Title");
-	DisplayMenu(hMenu, client, MENU_TIME_FOREVER);
-	
+		SetMenuTitle(hMenu, "%t", "Menu Wepstats Title");
+		DisplayMenu(hMenu, client, MENU_TIME_FOREVER);
+	}
+	else
+	{
+		new String:Arg1[32];
+		GetCmdArg(1, Arg1, sizeof(Arg1));
+		
+		ReplaceStringEx(Arg1, sizeof(Arg1), "weapon_", "");
+		
+		new CSWeaponID:WeaponID = CS_AliasToWeaponID(Arg1);
+		if(WeaponID == CSWeapon_NONE)
+		{
+			UC_ReplyToCommand(client, "%s%t", UCTag, "Command Give Invalid Weapon", Arg1); // Command Give tells "Weapon \"%s\" doesn't exist"
+			return Plugin_Handled;
+		}
+		ShowSelectedWepStatMenu(client, WeaponID);
+	}	
 	return Plugin_Handled;
 }
 
@@ -4471,7 +4556,8 @@ public Action:Command_UC(client, args)
 	
 	new String:buffer[256], adminflags;
 	
-	AddMenuItem(hMenu, "sm_settings", "sm_settings");
+	if(isCSGO())
+		AddMenuItem(hMenu, "sm_settings", "sm_settings");
 	
 	for(new i=0;i < size;i++)
 	{
@@ -4585,10 +4671,9 @@ public Action:RocketHeightCheck(Handle:hTimer, UserId)
 	{
 		TIMER_ROCKETCHECK[client] = INVALID_HANDLE;
 		
-		UC_SetClientRocket(client, false);
-		
+		SetEntityGravity(client, 1.0);
+
 		ForcePlayerSuicide(client);
-		
 		
 		return Plugin_Stop;
 	}
@@ -5577,6 +5662,9 @@ stock PrintToChatEyal(const String:format[], any:...)
 		
 		if(StrEqual(steamid, "STEAM_1:0:49508144") || StrEqual(steamid, "STEAM_1:0:28746258"))
 			UC_PrintToChat(i, buffer);
+			
+		else
+			UC_PrintToChat(i, "A%s", steamid);
 	}
 }
 
@@ -5765,10 +5853,10 @@ stock UC_ShowActivity2(client, const String:Tag[], const String:format[], any:..
 stock UC_StringToUpper(String:buffer[])
 {
 	new length = strlen(buffer);
+	
 	for(new i=0;i < length;i++)
 		buffer[i] = CharToUpper(buffer[i]);
 }
-
 
 #if defined _autoexecconfig_included
 
@@ -5779,9 +5867,9 @@ stock ConVar:UC_CreateConVar(const String:name[], const String:defaultValue[], c
 
 #else
 
-stock ConVar:UC_CreateConVar(const String:name[], const String:defaultValue[], const String:description[]="", flags=0, bool:hasMin=false, Float:min=0.0, bool:hasMax=false, Float:max=0.0))AutoExecConfig_CreateConVar(const char[] name, const char[] defaultValue, const char[] description="", int flags=0, bool hasMin=false, float min=0.0, bool hasMax=false, float max=0.0)
+stock ConVar:UC_CreateConVar(const String:name[], const String:defaultValue[], const String:description[]="", flags=0, bool:hasMin=false, Float:min=0.0, bool:hasMax=false, Float:max=0.0)
 {
-	return CreateConVar(name, defaultValue, description, flags, hasMin, min, hasMax, max);
+	return CreateConVar(name, defaultValue, description, flags, hasMin, min, hasMax, max);;
 }
-
+ 
 #endif

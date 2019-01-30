@@ -25,15 +25,15 @@
 	"Scored an Ace"
 	{
 		"#format"	"{1:N}"
-		"ru"	"{NORMAL}Игрок{GREEN} {1}{NORMAL} сделал{OLIVE} Эйс!"
+		"ru"	"Игрок{GREEN} {1}{NORMAL} сделал{OLIVE} Эйс!"
 	}
 	"UC Advertise"
 	{
-		"ru" " {NORMAL}На сервере запущен плагин{OLIVE} Useful Commands{NORMAL}. Автор -{LIGHTGREEN} Eyal282{NORMAL}!"
+		"ru" "На сервере запущен плагин{OLIVE} Useful Commands{NORMAL}. Автор -{LIGHTGREEN} Eyal282{NORMAL}!"
 	}
 	"UC Advertise 2"
 	{
-		"ru" " {NORMAL}Напишите{OLIVE} !uc{NORMAL} для просмотра{OLIVE} полезных команд{NORMAL}."
+		"ru" "Напишите{OLIVE} !uc{NORMAL} для просмотра{OLIVE} полезных команд{NORMAL}."
 	}
 	"Command Usage Target"
 	{
@@ -502,36 +502,36 @@
 	"Command Usage Admin Cookies #1"
 	{
 		"#format"	"{1:s}"
-		"en" "Использование: {1} <name> <reset> <value>"
+		"ru" "Использование: {1} <name> <reset> <value>"
 	}
 	"Command Usage Admin Cookies #2"
 	{
 		"#format"	"{1:s}"
-		"en" "Использование: {1} <name> <set> <#userid|name> <value>"
+		"ru" "Использование: {1} <name> <set> <#userid|name> <value>"
 	}
 	"Command Usage Admin Cookies #3"
 	{
 		"#format"	"{1:s}"
-		"en" "Использование: {1} <name> <offlineset> <\"AuthId\"> <value>"
+		"ru" "Использование: {1} <name> <offlineset> <\"AuthId\"> <value>"
 	}
 	"Command Admin Cookies Get Value"
 	{
 		"#format"	"{1:s},{2:s},{3:s}"
-		"en" "Значение переменной {2} у игрока {1} равно {3}"
+		"ru" "Значение переменной {2} у игрока {1} равно {3}"
 	}
 	"Command Admin Cookies Get Value Not Found"
 	{
 		"#format"	"{1:s},{2:s}"
-		"en" "Для игрока {1} значение переменной \"{2}\" не существует"
+		"ru" "Для игрока {1} значение переменной \"{2}\" не существует"
 	}
 	"Command Admin Cookies Set Value"
 	{
 		"#format"	"{1:s},{2:s},{3:s}"
-		"en" "Для игрока {2} значение переменной \"{1}\" установлено \"{3}\"
+		"ru" "Для игрока {2} значение переменной \"{1}\" установлено \"{3}\"
 	}
 	"Command Admin Cookies Reset Success"
 	{
 		"#format"	"{1:s},{2:s}"
-		"en" "Для каждого игрока значение переменной \"{1}\" установлено \"{2}\""
+		"ru" "Для каждого игрока значение переменной \"{1}\" установлено \"{2}\""
 	}
 }

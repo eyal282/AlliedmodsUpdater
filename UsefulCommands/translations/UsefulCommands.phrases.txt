@@ -25,15 +25,15 @@
 	"Scored an Ace"
 	{
 		"#format"	"{1:N}"
-		"en"	" {NORMAL}Player{GREEN} {1}{NORMAL} scored an{OLIVE} ACE."
+		"en"	"Player{GREEN} {1}{NORMAL} scored an{OLIVE} ACE."
 	}
 	"UC Advertise"
 	{
-		"en" " {NORMAL}This server is running{OLIVE} Useful Commands{NORMAL} by{LIGHTGREEN} Eyal282{NORMAL}!"
+		"en" "This server is running{OLIVE} Useful Commands{NORMAL} by{LIGHTGREEN} Eyal282{NORMAL}!"
 	}
 	"UC Advertise 2"
 	{
-		"en" " {NORMAL}Type{OLIVE} !uc{NORMAL} for the list of{OLIVE} Useful Commands{NORMAL}."
+		"en" "Type{OLIVE} !uc{NORMAL} for the list of{OLIVE} Useful Commands{NORMAL}."
 	}
 	"Command Usage Target"
 	{
