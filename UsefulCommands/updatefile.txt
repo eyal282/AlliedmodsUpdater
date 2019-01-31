@@ -2,11 +2,10 @@
 {
 	"Version"
 	{
-		"Latest"	"3.8"
+		"Latest"	"3.7"
 	}
 	
 	"Notes"	"New syntax for wepstats: !wepstats [classname], classname is optional for faster finding"
-	"Notes" "I have to temporarily lie that the version is 3.8 to force update due to some mistake. Version is actually 3.7 right now."
 }
 	
 "Files"
