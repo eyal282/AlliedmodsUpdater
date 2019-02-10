@@ -10,7 +10,12 @@
 #tryinclude <updater>  // Comment out this line to remove updater support by force.
 #tryinclude <autoexecconfig>
 
-new const String:PLUGIN_VERSION[] = "3.7";
+new const String:PLUGIN_VERSION[] = "3.8";
+
+#define MAX_CSGO_LEVEL 40
+
+#define ITEMS_GAME_PATH "scripts/items/items_game.txt"
+#define CACHE_ITEMS_GAME_PATH "data/UsefulCommands"
 
 public Plugin:myinfo = 
 {
@@ -40,8 +45,6 @@ public Plugin:myinfo =
 #define GAME_RULES_CVARS_PATH "gamerulescvars.txt"
 
 #define UPDATE_URL    "https://raw.githubusercontent.com/eyal282/AlliedmodsUpdater/master/UsefulCommands/updatefile.txt"
-
-//#define TEST
 
 #define COMMAND_FILTER_NONE 0
 
@@ -131,6 +134,7 @@ new bool:UberSlapped[MAXPLAYERS+1], TotalSlaps[MAXPLAYERS+1];
 //new LastHolidayCvar = 0;
 
 new Handle:Trie_UCCommands = INVALID_HANDLE;
+new Handle:Trie_CoinLevelValues = INVALID_HANDLE;
 
 new Handle:hcv_PartyMode = INVALID_HANDLE;
 new Handle:hcv_mpAnyoneCanPickupC4 = INVALID_HANDLE;
@@ -272,9 +276,10 @@ public APLRes:AskPluginLoad2(Handle:myself, bool:bLate, String:error[], length)
 	isLateLoaded = bLate;
 	
 	CreateNative("UsefulCommands_GetWeaponStats", Native_GetWeaponStatsList);
+	CreateNative("UsefulCommands_ApproximateClientRank", Native_ApproximateClientRank);
 }
 
-// native UsefulCommands_GetWeaponStats(CSWeaponID:WeaponID, &StatsList[])
+// native int UsefulCommands_GetWeaponStats(CSWeaponID WeaponID, int &StatsList[])
 
 public Native_GetWeaponStatsList(Handle:caller, numParams)
 {
@@ -290,6 +295,39 @@ public Native_GetWeaponStatsList(Handle:caller, numParams)
 	return true;
 }
 
+// native int UsefulCommands_ApproximateClientRank(int client);
+
+// returns approximate rank.
+// Note: if client has no service medals, returns exact rank.
+// Note: if client has one medal, returns exact rank ONLY if it's equipped.
+// Note: if client has more than one medal, does not return exact rank, however if you wanna filter out newbies, will work fine.
+// Note: if you kick a client based on his rank, you should ask him to temporarily equip a service medal if he reset his rank recently, and you should cache that his steam ID is an acceptable rank.
+
+
+public Native_ApproximateClientRank(Handle:caller, numParams)
+{	
+	new PlayerResourceEnt = GetPlayerResourceEntity();
+	
+	new client = GetNativeCell(1);
+	
+	if(!IsClientInGame(client))
+	{
+		ThrowNativeError(SP_ERROR_NATIVE, "Invalid client index %i", client);
+		return -1;
+	}
+	
+	new String:sCoin[64], value, rank = GetEntProp(PlayerResourceEnt, Prop_Send, "m_nPersonaDataPublicLevel", _, client);
+	IntToString(GetEntProp(PlayerResourceEnt, Prop_Send, "m_nActiveCoinRank", _, client), sCoin, sizeof(sCoin));
+	
+	if(rank == -1)
+		rank = 0;
+		
+	if(GetTrieValue(Trie_CoinLevelValues, sCoin, value))
+		rank += value;
+	
+	return rank;
+}
+
 public OnPluginStart()
 {
 	GameName = GetEngineVersion();
@@ -301,6 +339,7 @@ public OnPluginStart()
 	#endif
 	
 	Trie_UCCommands = CreateTrie();
+	Trie_CoinLevelValues = CreateTrie();
 	
 	LoadTranslations("UsefulCommands.phrases");
 	LoadTranslations("common.phrases");
@@ -359,6 +398,11 @@ public OnPluginStart()
 	
 		HookConVarChange(hcv_ucTeleportBomb, OnTeleportBombChanged);
 				
+			
+		HookEvent("bomb_defused", Event_BombDefused, EventHookMode_Pre);
+		HookEvent("weapon_fire", Event_WeaponFire, EventHookMode_Pre);
+		HookEvent("player_use", Event_PlayerUse, EventHookMode_Post);
+		
 		SetCookieMenuItem(PartyModeCookieMenu_Handler, 0, "Party Mode");
 		
 		if(TeleportsArray == INVALID_HANDLE)
@@ -373,6 +417,14 @@ public OnPluginStart()
 		if(!IsSoundPrecached(ItemPickUpSound))
 			PrecacheSoundAny(ItemPickUpSound);
 	}
+	
+	HookEvent("player_spawn", Event_PlayerSpawn, EventHookMode_Post);
+	HookEvent("player_death", Event_PlayerDeath, EventHookMode_Post);
+	//HookEvent("player_death", Event_PlayerDeathPre, EventHookMode_Pre);
+	HookEvent("player_team", Event_PlayerTeam, EventHookMode_Post);
+	HookEvent("cs_win_panel_round", Event_CsWinPanelRound, EventHookMode_Pre);
+	HookEvent("round_start", Event_RoundStart, EventHookMode_PostNoCopy);
+	HookEvent("round_end", Event_RoundEnd, EventHookMode_Post);
 	
 	LoadTranslations("common.phrases");
 	
@@ -393,7 +445,6 @@ public OnPluginStart()
 			OnClientPutInServer(i);
 		}
 		
-		OnAllPluginsLoaded();
 		OnMapStart();
 	}
 }
@@ -545,10 +596,6 @@ public OnAllPluginsLoaded()
 	
 		hCookie_EnablePM = RegClientCookie("UsefulCommands_PartyMode", "Party Mode flags. 0 = Disabled, 1 = Defuse balloons only, 2 = Zeus only, 3 = Both.", CookieAccess_Public);
 		hCookie_AceFunFact = RegClientCookie("UsefulCommands_AceFunFact", "When you make an ace, this will be the fun fact to send to the server. $name -> your name. $team -> your team. $opteam -> your opponent team.", CookieAccess_Public);	
-			
-		HookEvent("bomb_defused", Event_BombDefused, EventHookMode_Pre);
-		HookEvent("weapon_fire", Event_WeaponFire, EventHookMode_Pre);
-		HookEvent("player_use", Event_PlayerUse, EventHookMode_Post);
 		
 		hcv_mpAnyoneCanPickupC4 = FindConVar("mp_anyone_can_pickup_c4");
 		
@@ -577,14 +624,6 @@ public OnAllPluginsLoaded()
 			
 		
 	}	
-		
-	HookEvent("player_spawn", Event_PlayerSpawn, EventHookMode_Post);
-	HookEvent("player_death", Event_PlayerDeath, EventHookMode_Post);
-	//HookEvent("player_death", Event_PlayerDeathPre, EventHookMode_Pre);
-	HookEvent("player_team", Event_PlayerTeam, EventHookMode_Post);
-	HookEvent("cs_win_panel_round", Event_CsWinPanelRound, EventHookMode_Pre);
-	HookEvent("round_start", Event_RoundStart, EventHookMode_PostNoCopy);
-	HookEvent("round_end", Event_RoundEnd, EventHookMode_Post);
 	
 	
 	#if defined _autoexecconfig_included
@@ -594,9 +633,6 @@ public OnAllPluginsLoaded()
 	AutoExecConfig_CleanFile();
 	
 	#endif
-	
-		
-	LogError("%i", hcv_PartyMode);
 }
 
 public hcvChange_ucTag(Handle:convar, const String:oldValue[], const String:newValue[])
@@ -769,24 +805,136 @@ public OnConfigsExecuted()
 	if(GetConVarBool(hcv_ucSpecialC4Rules))
 		SetConVarBool(hcv_mpAnyoneCanPickupC4, true);
 	
-	new KeyValues:keyValues = CreateKeyValues("items_game")
+	new KeyValues:keyValues = CreateKeyValues("items_game");
+	new KeyValues:CacheKeyValues = CreateKeyValues("items_game");
 	
-	if(!FileToKeyValues(keyValues, "scripts/items/items_game.txt"))
+	new String:CachePath[256];
+	BuildPath(Path_SM, CachePath, sizeof(CachePath), CACHE_ITEMS_GAME_PATH);
+	
+	CreateDirectory(CachePath, 0);
+	
+	Format(CachePath, sizeof(CachePath), "%s/items_game.txt", CachePath);
+	
+	new bool:ShouldCache = true;
+	
+	if(!FileExists(CachePath))
+		ShouldCache = false;
+	
+	new CacheLastEdited = GetFileTime(CachePath, FileTime_LastChange);
+	
+	if(CacheLastEdited == -1)
+		ShouldCache = false;
+		
+	new LastEdited = GetFileTime(ITEMS_GAME_PATH, FileTime_LastChange);
+	
+	if(LastEdited == -1)
 		return;
+
+	if(LastEdited > CacheLastEdited)
+		ShouldCache = false;
+		
+	if(ShouldCache)
+	{
+		if(!FileToKeyValues(keyValues, CachePath))
+		{
+			if(!FileToKeyValues(keyValues, ITEMS_GAME_PATH))
+				return;
+			
+			DeleteFile(CachePath);
+			
+			UC_CreateEmptyFile(CachePath);
+			
+			ShouldCache = false;
+		}
+	}
+	else
+	{		
+		if(!FileToKeyValues(keyValues, ITEMS_GAME_PATH))
+			return;
+		
+		DeleteFile(CachePath);
+		
+		UC_CreateEmptyFile(CachePath);
+	}
 	
 	if(!KvGotoFirstSubKey(keyValues))
 		return;
+
+	new String:buffer[64], String:levelValue[64], position;
 	
-	new WepNone = view_as<int>(CSWeapon_NONE);
+	KvSavePosition(keyValues);
 	
-	new String:buffer[64];
+	if(!ShouldCache)
+		KvSavePosition(CacheKeyValues);
+		
 	do
 	{
 		KvGetSectionName(keyValues, buffer, sizeof(buffer));
+		
+		if(StrEqual(buffer, "items"))
+		{
+			KvGotoFirstSubKey(keyValues);
+			
+			if(!ShouldCache)
+				KvJumpToKey(CacheKeyValues, "items", true);
+				
+			break;
+		}
+	}
+	while(KvGotoNextKey(keyValues))
 	
+	do
+	{
+		KvGetSectionName(keyValues, buffer, sizeof(buffer));
+		
+		if(UC_IsStringNumber(buffer))
+		{
+			KvGetString(keyValues, "name", levelValue, sizeof(levelValue));
+			
+			position = StrContains(levelValue, "prestige", false);
+			
+			if(position != -1 && !ShouldCache)
+			{	
+				UC_KvCopyChildren(keyValues, CacheKeyValues, buffer);
+			}	
+			if(position == -1)
+				SetTrieValue(Trie_CoinLevelValues, buffer, 0);
+				
+			else if((position = StrContains(levelValue, "level", false)) == -1)
+			{
+				IntToString(MAX_CSGO_LEVEL, levelValue, sizeof(levelValue));
+				SetTrieValue(Trie_CoinLevelValues, buffer, StringToInt(levelValue));
+			}
+			else
+			{
+				SetTrieValue(Trie_CoinLevelValues, buffer, StringToInt(levelValue[position]));
+			}
+		}
+	}
+	while(KvGotoNextKey(keyValues))
+	
+	KvRewind(keyValues);
+	KvGotoFirstSubKey(keyValues);
+	
+	if(!ShouldCache)
+	{
+		KvRewind(CacheKeyValues);
+		KvGotoFirstSubKey(keyValues);
+	}
+
+	new WepNone = view_as<int>(CSWeapon_NONE);
+	
+	do
+	{
+		KvGetSectionName(keyValues, buffer, sizeof(buffer));
+		
 		if(StrEqual(buffer, "prefabs"))
 		{
 			KvGotoFirstSubKey(keyValues);
+			
+			if(!ShouldCache)
+				KvJumpToKey(CacheKeyValues, "prefabs", true);
+				
 			break;
 		}
 	}
@@ -796,13 +944,24 @@ public OnConfigsExecuted()
 	
 	KvSavePosition(keyValues);
 	
+	if(!ShouldCache)
+	{
+		KvGoBack(CacheKeyValues);
+		
+		KvSavePosition(CacheKeyValues);
+	}
 	do
 	{
 		KvGetSectionName(keyValues, buffer, sizeof(buffer));
-	
+		
 		if(StrEqual(buffer, "statted_item_base"))
 		{
 			KvGotoFirstSubKey(keyValues);
+			
+			if(!ShouldCache)
+			{
+				KvJumpToKey(CacheKeyValues, "statted_item_base", true);
+			}	
 			break;
 		}
 	}
@@ -815,6 +974,12 @@ public OnConfigsExecuted()
 		if(StrEqual(buffer, "attributes"))
 		{
 			KvGotoFirstSubKey(keyValues);
+				
+			if(!ShouldCache)
+			{
+				UC_KvCopyChildren(keyValues, CacheKeyValues, "attributes");
+			}	
+			
 			break;
 		}
 	}
@@ -833,6 +998,11 @@ public OnConfigsExecuted()
 	
 	KvGoBack(keyValues);
 	
+	if(!ShouldCache)
+	{
+		KvGoBack(CacheKeyValues);
+		KvJumpToKey(CacheKeyValues, "prefabs", true);
+	}
 	new String:CompareBuffer[64], String:Alias[64];
 	do
 	{
@@ -854,6 +1024,9 @@ public OnConfigsExecuted()
 							KvSavePosition(keyValues); // Save our position.
 							KvGotoFirstSubKey(keyValues);
 							
+							if(!ShouldCache)
+								KvJumpToKey(CacheKeyValues, buffer, true);
+							
 							new bool:bBreak = false;
 							do
 							{
@@ -866,7 +1039,7 @@ public OnConfigsExecuted()
 								}
 							}
 							while(!bBreak && KvGotoNextKey(keyValues)) // Find them attributes.
-							
+						
 							new Float:cycletime;
 							wepStatsList[i][wepStatsFireRate] = RoundFloat((1.0 / (cycletime=KvGetFloat(keyValues, "cycletime", -1.0))) * 60.0); // By RPM = Rounds per Minute. Note: NEVER ALLOW DEFAULT VALUE 0.0 WHEN DIVIDING IT!!!
 							
@@ -924,7 +1097,15 @@ public OnConfigsExecuted()
 							wepStatsList[i][wepStatsDamagePerSecondNoArmor] = RoundFloat((1.0 / cycletime) * wepStatsList[i][wepStatsDamage]);
 							wepStatsList[i][wepStatsDamagePerSecondArmor] = RoundFloat((1.0 / cycletime) * wepStatsList[i][wepStatsDamage] * (wepStatsList[i][wepStatsArmorPenetration]/100));
 							
+							if(!ShouldCache)
+							{
+								UC_KvCopyChildren(keyValues, CacheKeyValues, "attributes");
+								KvGoBack(CacheKeyValues);
+							}
 							KvGoBack(keyValues);
+							
+							
+							
 							i = CSWeapon_MAX_WEAPONS; // Equivalent of break.
 						}
 					}
@@ -934,7 +1115,14 @@ public OnConfigsExecuted()
 	}
 	while(KvGotoNextKey(keyValues))
 
+	if(!ShouldCache)
+	{	
+		KvRewind(CacheKeyValues);
+		KeyValuesToFile(CacheKeyValues, CachePath); // Note to self: KvRewind always when using KeyValuesToFile because it uses current position.
+	}	
+	
 	CloseHandle(keyValues);
+	CloseHandle(CacheKeyValues);
 	
 	Call_StartForward(fw_ucWeaponStatsRetrievedPost);
 	
@@ -1513,8 +1701,6 @@ public Action:Event_PlayerSpawn(Handle:hEvent, const String:Name[], bool:dontBro
 {	
 	new client = GetClientOfUserId(GetEventInt(hEvent, "userid"));
 	
-	RoundKills[client] = 0;
-
 	UberSlapped[client] = false;
 	RequestFrame(ResetTrueTeam, GetClientUserId(client));
 	if(TIMER_UBERSLAP[client] != INVALID_HANDLE)
@@ -5662,9 +5848,6 @@ stock PrintToChatEyal(const String:format[], any:...)
 		
 		if(StrEqual(steamid, "STEAM_1:0:49508144") || StrEqual(steamid, "STEAM_1:0:28746258"))
 			UC_PrintToChat(i, buffer);
-			
-		else
-			UC_PrintToChat(i, "A%s", steamid);
 	}
 }
 
@@ -5873,3 +6056,25 @@ stock ConVar:UC_CreateConVar(const String:name[], const String:defaultValue[], c
 }
  
 #endif
+
+stock UC_CreateEmptyFile(const String:Path[])
+{
+	CloseHandle(OpenFile(Path, "a"));
+}
+
+
+/**
+ * Merges two KeyValues into one.
+ *
+ * @param origin         KeyValues handle from which new information should be copied.
+ * @param dest      KeyValues handle to which new information should be written.
+ * @param RootName		The name of the root section. Has to be KvGetSectionName(origin, RootName, sizeof(RootName))
+ * @note: both origin and destination key values need to be at the same level, except destination key value doesn't have the root name created, it is done in this stock for convenience. RootName being equal to KvGetSectionName of origin key value.
+ 
+ */
+stock UC_KvCopyChildren(Handle:origin, Handle:dest, const String:RootName[])
+{
+	KvJumpToKey(dest, RootName, true);
+	KvCopySubkeys(origin, dest);
+	KvGoBack(dest);
+}
