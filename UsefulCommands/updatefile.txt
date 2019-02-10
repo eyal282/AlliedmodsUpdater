@@ -2,10 +2,10 @@
 {
 	"Version"
 	{
-		"Latest"	"3.7"
+		"Latest"	"3.8"
 	}
 	
-	"Notes"	"New syntax for wepstats: !wepstats [classname], classname is optional for faster finding"
+	"Notes"	"After the very first load of the plugin, from now on servers will no longer freeze for up to 3 seconds on startup ( it should be just one second to be honest ) and now it'll be near instant. This is because of the functionality of !wepstats. Take note that the server will freeze every time Volvo changes the items_game.txt file."
 }
 	
 "Files"
