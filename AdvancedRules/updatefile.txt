@@ -1,0 +1,14 @@
+"Information"
+{
+	"Version"
+	{
+		"Latest"	"1.2"
+	}
+	
+	"Notes" "Fixed a great break in rules when repositioning them."
+}
+	
+"Files"
+{
+	"Plugin"	"Path_SM/plugins/AdvancedRules.smx"
+}
