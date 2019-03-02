@@ -2,10 +2,10 @@
 {
 	"Version"
 	{
-		"Latest"	"1.2"
+		"Latest"	"1.3"
 	}
 	
-	"Notes" "Fixed a great break in rules when repositioning them."
+	"Notes" "When going back to the rules menu from a rule, it'll go to the same page you were in."
 }
 	
 "Files"
