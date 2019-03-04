@@ -2,10 +2,10 @@
 {
 	"Version"
 	{
-		"Latest"	"1.4"
+		"Latest"	"1.5"
 	}
 	
-	"Notes" "Cosmetic changes"
+	"Notes" "Fixed plugin not loading if you don't have Updater."
 }
 	
 "Files"
