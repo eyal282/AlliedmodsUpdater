@@ -7,9 +7,15 @@
 #include <clientprefs>
 
 #undef REQUIRE_PLUGIN
+#undef REQUIRE_EXTENSIONS
+#tryinclude <cURL>
+#tryinclude <socket>
+#tryinclude <steamtools>
+#tryinclude <SteamWorks>
 #tryinclude <updater>  // Comment out this line to remove updater support by force.
 #tryinclude <autoexecconfig>
-
+#define REQUIRE_PLUGIN
+#define REQUIRE_EXTENSIONS
 new const String:PLUGIN_VERSION[] = "3.8";
 
 #define MAX_CSGO_LEVEL 40
@@ -63,6 +69,13 @@ public Plugin:myinfo =
 #define PARTYMODE_NONE 0
 #define PARTYMODE_DEFUSE (1<<0)
 #define PARTYMODE_ZEUS (1<<1)
+
+#define CURL_AVAILABLE()		(GetFeatureStatus(FeatureType_Native, "curl_easy_init") == FeatureStatus_Available)
+#define SOCKET_AVAILABLE()		(GetFeatureStatus(FeatureType_Native, "SocketCreate") == FeatureStatus_Available)
+#define STEAMTOOLS_AVAILABLE()	(GetFeatureStatus(FeatureType_Native, "Steam_CreateHTTPRequest") == FeatureStatus_Available)
+#define STEAMWORKS_AVAILABLE()	(GetFeatureStatus(FeatureType_Native, "SteamWorks_WriteHTTPResponseBodyToFile") == FeatureStatus_Available)
+
+#define EXTENSION_ERROR		"This plugin requires one of the cURL, Socket, SteamTools, or SteamWorks extensions to function."
 
 new String:UCTag[65];
 
@@ -302,7 +315,7 @@ public Native_GetWeaponStatsList(Handle:caller, numParams)
 // Note: if client has one medal, returns exact rank ONLY if it's equipped.
 // Note: if client has more than one medal, does not return exact rank, however if you wanna filter out newbies, will work fine.
 // Note: if you kick a client based on his rank, you should ask him to temporarily equip a service medal if he reset his rank recently, and you should cache that his steam ID is an acceptable rank.
-
+// Note: don't use this on Counter-Strike: Source lol.
 
 public Native_ApproximateClientRank(Handle:caller, numParams)
 {	
@@ -945,11 +958,8 @@ public OnConfigsExecuted()
 	KvSavePosition(keyValues);
 	
 	if(!ShouldCache)
-	{
-		KvGoBack(CacheKeyValues);
-		
 		KvSavePosition(CacheKeyValues);
-	}
+
 	do
 	{
 		KvGetSectionName(keyValues, buffer, sizeof(buffer));
@@ -999,10 +1009,8 @@ public OnConfigsExecuted()
 	KvGoBack(keyValues);
 	
 	if(!ShouldCache)
-	{
 		KvGoBack(CacheKeyValues);
-		KvJumpToKey(CacheKeyValues, "prefabs", true);
-	}
+
 	new String:CompareBuffer[64], String:Alias[64];
 	do
 	{
@@ -3243,7 +3251,7 @@ public Action:Command_Blink(client, args)
 					client,
 					target_list,
 					MaxClients,
-					COMMAND_FILTER_NONE,
+					COMMAND_FILTER_ALIVE,
 					target_name,
 					sizeof(target_name),
 					tn_is_ml);
@@ -3260,7 +3268,11 @@ public Action:Command_Blink(client, args)
 		new target = target_list[i];
 		
 		new Float:Origin[3];
-		UC_GetAimPositionBySize(client, target, Origin);
+		if(!UC_GetAimPositionBySize(client, target, Origin))
+		{
+			ReplyToCommand(client, "Cannot teleport");
+			return Plugin_Handled;
+		}
 		
 		TeleportEntity(target, Origin, NULL_VECTOR, NULL_VECTOR);
 	}
@@ -4888,7 +4900,7 @@ stock bool:UC_GetClientGodmode(client)
 }
 
 // This function is perfect but I need to conduct tests to ensure no bugs occur.
-stock UC_GetAimPositionBySize(client, target, Float:outputOrigin[3])
+stock bool:UC_GetAimPositionBySize(client, target, Float:outputOrigin[3])
 {
 	new Float:BrokenOrigin[3];
 	new Float:vecMin[3], Float:vecMax[3], Float:eyeOrigin[3], Float:eyeAngles[3], Float:Result[3], Float:FakeOrigin[3], Float:clientOrigin[3];
@@ -4908,9 +4920,12 @@ stock UC_GetAimPositionBySize(client, target, Float:outputOrigin[3])
 	TR_GetEndPosition(FakeOrigin);
 	
 	Result = FakeOrigin;
-		
-	new Float:fwd[3];
 	
+	if(TR_PointOutsideWorld(Result))
+		return false;
+		
+	new Float:fwd[3];	
+
 	GetAngleVectors(eyeAngles, fwd, NULL_VECTOR, NULL_VECTOR);
 	
 	NegateVector(fwd);
@@ -4926,14 +4941,23 @@ stock UC_GetAimPositionBySize(client, target, Float:outputOrigin[3])
 	
 	ScaleVector(fwd, 1.3);
 	
+	new Timeout = 0;
+
 	while(IsPlayerStuck(target, Result, (-1 * clientHeight) + OffsetFix))
 	{
 		AddVectors(Result, fwd, Result);	
+		
+		Timeout++;
+		
+		if(Timeout > 8192)
+			return false;
 	}
 	
 	Result[2] += (-1 * clientHeight) + OffsetFix;
 	
 	outputOrigin = Result;
+	
+	return true;
 	
 }
 
