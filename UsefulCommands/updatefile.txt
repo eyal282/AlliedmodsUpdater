@@ -2,10 +2,10 @@
 {
 	"Version"
 	{
-		"Latest"	"3.8"
+		"Latest"	"3.9"
 	}
 	
-	"Notes"	"After the very first load of the plugin, from now on servers will no longer freeze for up to 3 seconds on startup ( it should be just one second to be honest ) and now it'll be near instant. This is because of the functionality of !wepstats. Take note that the server will freeze every time Volvo changes the items_game.txt file."
+	"Notes"	"Fixed !wepstats bug."
 }
 	
 "Files"
