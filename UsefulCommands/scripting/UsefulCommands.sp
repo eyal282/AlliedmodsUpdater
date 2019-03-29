@@ -16,7 +16,7 @@
 #tryinclude <autoexecconfig>
 #define REQUIRE_PLUGIN
 #define REQUIRE_EXTENSIONS
-new const String:PLUGIN_VERSION[] = "3.8";
+new const String:PLUGIN_VERSION[] = "4.0";
 
 #define MAX_CSGO_LEVEL 40
 
@@ -3669,7 +3669,7 @@ public Action:Command_Money(client, args)
 	{
 		new target = target_list[i];
 		
-		SetEntProp(target, Prop_Send, "m_iAccount", money);
+		UC_SetClientMoney(target, money);
 	}
 	
 	UC_ShowActivity2(client, UCTag, "%t", "Player Set Money", target_name, money);
@@ -6076,7 +6076,7 @@ stock ConVar:UC_CreateConVar(const String:name[], const String:defaultValue[], c
 
 stock ConVar:UC_CreateConVar(const String:name[], const String:defaultValue[], const String:description[]="", flags=0, bool:hasMin=false, Float:min=0.0, bool:hasMax=false, Float:max=0.0)
 {
-	return CreateConVar(name, defaultValue, description, flags, hasMin, min, hasMax, max);;
+	return CreateConVar(name, defaultValue, description, flags, hasMin, min, hasMax, max);
 }
  
 #endif
@@ -6101,4 +6101,25 @@ stock UC_KvCopyChildren(Handle:origin, Handle:dest, const String:RootName[])
 	KvJumpToKey(dest, RootName, true);
 	KvCopySubkeys(origin, dest);
 	KvGoBack(dest);
+}
+
+
+stock UC_SetClientMoney(client, money)
+{
+	SetEntProp(client, Prop_Send, "m_iAccount", money);
+	
+	if(isCSGO)
+	{
+		new moneyEntity = CreateEntityByName("game_money");
+		
+		DispatchKeyValue(moneyEntity, "Award Text", "");
+		
+		DispatchSpawn(moneyEntity);
+		
+		AcceptEntityInput(moneyEntity, "SetMoneyAmount 0");
+	
+		AcceptEntityInput(moneyEntity, "AddMoneyPlayer", client);
+		
+		AcceptEntityInput(moneyEntity, "Kill");
+	}
 }
