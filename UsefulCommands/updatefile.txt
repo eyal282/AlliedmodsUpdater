@@ -2,10 +2,10 @@
 {
 	"Version"
 	{
-		"Latest"	"3.9"
+		"Latest"	"4.0"
 	}
 	
-	"Notes"	"Fixed !wepstats bug."
+	"Notes"	"!money now saves the money you're given after round end."
 }
 	
 "Files"
