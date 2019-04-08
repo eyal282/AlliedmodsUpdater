@@ -2,10 +2,11 @@
 {
 	"Version"
 	{
-		"Latest"	"1.5"
+		"Latest"	"1.6"
 	}
 	
-	"Notes" "Fixed plugin not loading if you don't have Updater."
+	"Notes" "Dicovered a bug with using // to add a rule. Now //n will not work and /n will work."
+	"Notes" "Plugin is now broken, edit your Rules.cfg and replace all instances of //n with /n"
 }
 	
 "Files"
