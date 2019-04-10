@@ -2,10 +2,11 @@
 {
 	"Version"
 	{
-		"Latest"	"1.8"
+		"Latest"	"1.9"
 	}
 	
 	"Notes" "If client's cookies aren't cached, the native should client read rules will return false."
+	"Notes" "Thanks Niklav's for helping me fix bug where the native of should read rules never works."
 }
 	
 "Files"
