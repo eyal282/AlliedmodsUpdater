@@ -2,11 +2,10 @@
 {
 	"Version"
 	{
-		"Latest"	"1.6"
+		"Latest"	"1.7"
 	}
 	
-	"Notes" "Dicovered a bug with using // to add a rule. Now //n will not work and /n will work."
-	"Notes" "Plugin is now broken, edit your Rules.cfg and replace all instances of //n with /n"
+	"Notes" "Rule description length is now capped at 1024 characters over the old 256"
 }
 	
 "Files"
