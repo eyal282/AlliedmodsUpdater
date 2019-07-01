@@ -1,0 +1,1 @@
+"Games"{	"csgo"	{		"Offsets"		{			"PlayerMaxSpeedOffset"			{				"windows" "504"				"linux" "505"			}		}	}}

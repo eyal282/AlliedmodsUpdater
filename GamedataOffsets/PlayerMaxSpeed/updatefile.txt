@@ -1,0 +1,14 @@
+"Information"
+{
+	"Version"
+	{
+		"Latest"	"1.0"
+	}
+	
+	"Notes" "Bruh"
+}
+	
+"Files"
+{
+	"Plugin"	"Path_SM/gamedata/PlayerMaxSpeedOffset.txt"
+}
