@@ -2,10 +2,13 @@
 {
 	"Version"
 	{
-		"Latest"	"4.0"
+		"Latest"	"4.1"
 	}
 	
-	"Notes"	"!money now saves the money you're given after round end."
+	"Notes"	"!respawn which behaves exactly like !revive"
+	"Notes"	"New !spec command that behaves exactly like !team <target> spec"
+	"Notes"	"Fixed bug that possibly caused solid spectators to exist when using !team <target> spec"
+	"Notes"	"A broken command !markofdeath will make you drown on land"
 }
 	
 "Files"
