@@ -17,7 +17,7 @@
 #define REQUIRE_PLUGIN
 #define REQUIRE_EXTENSIONS
 
-new const String:PLUGIN_VERSION[] = "4.1";
+new const String:PLUGIN_VERSION[] = "4.2";
 
 public Plugin:myinfo = 
 {
@@ -468,6 +468,8 @@ public OnPluginStart()
 #if defined _updater_included
 public Updater_OnPluginUpdated()
 {
+	ServerCommand("sm_reload_translations");
+	
 	ReloadPlugin(INVALID_HANDLE);
 }
 #endif
@@ -2858,23 +2860,25 @@ public Action:Command_Give(client, args)
 	ReplaceString(arg2, sizeof(arg2), "bomb", "c4");
 	ReplaceString(WeaponName, sizeof(WeaponName), "bomb", "c4");
 	
+	ReplaceString(arg2, sizeof(arg2), "kit", "defuser");
+	ReplaceString(WeaponName, sizeof(WeaponName), "kit", "defuser");
+	
 	new weapon = -1;
 	
 	for(new count=0;count < target_count;count++)
 	{
 		new target = target_list[count];
-
-		if(StrEqual(arg2, "weapon_defuse", false) || StrEqual(arg2, "weapon_defuser", false) || StrEqual(arg2, "weapon_kit", false))
+		
+		if((weapon = GivePlayerItem(target, arg2)) == -1)
 		{
-			arg2 = "item_defuser";
+			ReplaceStringEx(arg2, sizeof(arg2), "weapon_", "item_");
 			
-			weapon = -1;
-		}
-		else if((weapon = GivePlayerItem(target, arg2)) == -1)
-		{
-			UC_ReplyToCommand(client, "%s%t", UCTag, "Command Give Invalid Weapon", WeaponName);
+			if((weapon = GivePlayerItem(target, arg2)) == -1)
+			{
+				UC_ReplyToCommand(client, "%s%t", UCTag, "Command Give Invalid Weapon", WeaponName);
 			
-			return Plugin_Handled;
+				return Plugin_Handled;
+			}
 		}
 		
 		if(weapon != -1)
@@ -6338,6 +6342,7 @@ stock UC_KvCopyChildren(Handle:origin, Handle:dest, const String:RootName[])
 stock UC_SetClientMoney(client, money)
 {
 	SetEntProp(client, Prop_Send, "m_iAccount", money);
+	SetEntProp(client, Prop_Send, "m_iStartAccount", money);
 	
 	if(isCSGO)
 	{
