@@ -60,6 +60,11 @@
 		"#format"	"{1:s}"
 		"en" "Usage: {1} <#userid|name> <CT/T/Spec>"
 	}
+	"Command Usage Spec"
+	{
+		"#format"	"{1:s}"
+		"en" "Usage: {1} <#userid|name>"
+	}
 	"Player Respawned"
 	{
 		"#format"	"{1:s}"
@@ -90,6 +95,16 @@
 	{
 		"#format"	"{1:s}"
 		"en" "unburied {1}."
+	}
+	"Player Marked"
+	{
+		"#format"	"{1:s}"
+		"en" "put mark of death on {1}."
+	}
+	"Player Unmarked"
+	{
+		"#format"	"{1:s}"
+		"en" "removed mark of death on {1}."
 	}
 	"Player Already Uberslapped"
 	{
@@ -394,6 +409,11 @@
 		"#format" "{1:s}"
 		"en" "Usage: {1} <message>"
 	}
+	"Command Usage Find Cvar"
+	{
+		"#format" "{1:s}"
+		"en" "Usage: {1} <part of name>"
+	}
 	"Command Ace Message Set To Default"
 	{
 		"en" "Successfully set Ace fun fact to default message."
@@ -533,5 +553,13 @@
 	{
 		"#format"	"{1:s},{2:s}"
 		"en" "Successfully reset value of cookie \"{1}\" for everyone to value \"{2}\""
+	}
+	"Check Console"
+	{
+		"en" "Check the console for output."
+	}
+	"Could not find commands"
+	{
+		"en" "Could not find any commands."
 	}
 }

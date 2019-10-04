@@ -16,12 +16,8 @@
 #tryinclude <autoexecconfig>
 #define REQUIRE_PLUGIN
 #define REQUIRE_EXTENSIONS
-new const String:PLUGIN_VERSION[] = "4.0";
 
-#define MAX_CSGO_LEVEL 40
-
-#define ITEMS_GAME_PATH "scripts/items/items_game.txt"
-#define CACHE_ITEMS_GAME_PATH "data/UsefulCommands"
+new const String:PLUGIN_VERSION[] = "4.1";
 
 public Plugin:myinfo = 
 {
@@ -31,6 +27,13 @@ public Plugin:myinfo =
 	version = PLUGIN_VERSION,
 	url = "https://forums.alliedmods.net/showthread.php?p=2617618"
 }
+
+#define FPERM_ULTIMATE (FPERM_U_READ|FPERM_U_WRITE|FPERM_U_EXEC|FPERM_G_READ|FPERM_G_WRITE|FPERM_G_EXEC|FPERM_O_READ|FPERM_O_WRITE|FPERM_O_EXEC)
+
+#define MAX_CSGO_LEVEL 40
+
+#define ITEMS_GAME_PATH "scripts/items/items_game.txt"
+#define CACHE_ITEMS_GAME_PATH "data/UsefulCommands"
 
 #define MAX_INTEGER 2147483647
 #define MIN_FLOAT -2147483647.0 // I think -2147483648 is lowest but meh, same thing.
@@ -201,6 +204,8 @@ new bool:AceSent = false, TrueTeam[MAXPLAYERS+1];
 new Handle:dbLocal, Handle:dbClientPrefs;
 
 new bool:FullInGame[MAXPLAYERS+1];
+
+new String:LastAuthStr[MAXPLAYERS+1][64];
 
 new Float:LastHeight[MAXPLAYERS+1];
 
@@ -408,7 +413,7 @@ public OnPluginStart()
 		hcv_ucPacketNotifyCvars = UC_CreateConVar("uc_packet_notify_cvars", "2", "If 2, acts like 1 but also deletes the gamerulescvars.txt file before doing it. If 1, UC will put all FCVAR_NOTIFY cvars in gamerulescvars.txt", FCVAR_NOTIFY);
 		
 		hcv_ucGlowType = UC_CreateConVar("uc_glow_type", "1", "0 = Wallhack, 1 = Fullbody, 2 = Surround Player, 3 = Blinking and Surround Player");
-	
+		
 		HookConVarChange(hcv_ucTeleportBomb, OnTeleportBombChanged);
 				
 			
@@ -438,8 +443,6 @@ public OnPluginStart()
 	HookEvent("cs_win_panel_round", Event_CsWinPanelRound, EventHookMode_Pre);
 	HookEvent("round_start", Event_RoundStart, EventHookMode_PostNoCopy);
 	HookEvent("round_end", Event_RoundEnd, EventHookMode_Post);
-	
-	LoadTranslations("common.phrases");
 	
 	#if defined _updater_included
 	if (LibraryExists("updater"))
@@ -496,6 +499,9 @@ public OnAllPluginsLoaded()
 	
 	if(!CommandExists("sm_revive"))
 		UC_RegAdminCmd("sm_revive", Command_Revive, ADMFLAG_BAN, "Respawns a player from the dead");
+		
+	if(!CommandExists("sm_respawn"))
+		UC_RegAdminCmd("sm_respawn", Command_Revive, ADMFLAG_BAN, "Respawns a player from the dead");
 
 	if(!CommandExists("sm_1up"))
 		UC_RegAdminCmd("sm_1up", Command_HardRevive, ADMFLAG_BAN, "Respawns a player from the dead back to his death position");
@@ -554,12 +560,15 @@ public OnAllPluginsLoaded()
 	if(!CommandExists("sm_disarm"))
 		UC_RegAdminCmd("sm_disarm", Command_Disarm, ADMFLAG_BAN, "strips all of the player's weapons");	
 		
+	if(!CommandExists("sm_markofdeath"))
+		UC_RegAdminCmd("sm_markofdeath", Command_MarkOfDeath, ADMFLAG_BAN, "marks the target with the mark of death, slowly murdering him");
+	
 	//if(!CommandExists("sm_cheat"))
 		//UC_RegAdminCmd("sm_cheat", Command_Cheat, ADMFLAG_CHEATS, "Writes a command bypassing its cheat flag.");	
 		
 	if(!CommandExists("sm_last"))
 	{
-		UC_RegAdminCmd("sm_last", Command_Last, ADMFLAG_BAN, "Shows a full list of every single player that ever visited");
+		UC_RegAdminCmd("sm_last", Command_Last, ADMFLAG_BAN, "sm_last [steamid/name/ip] Shows a full list of every single player that ever visited");
 		RegAdminCmd("sm_uc_last_showip", Command_Last, ADMFLAG_ROOT);
 	}	
 	if(!CommandExists("sm_exec"))
@@ -580,6 +589,9 @@ public OnAllPluginsLoaded()
 	if(!CommandExists("sm_team"))
 		UC_RegAdminCmd("sm_team", Command_Team, ADMFLAG_GENERIC, "Sets a player's team.");
 		
+	if(!CommandExists("sm_spec"))
+		UC_RegAdminCmd("sm_spec", Command_Spec, ADMFLAG_GENERIC, "Moves a player to spectator team.");
+		
 	if(!CommandExists("sm_xyz"))
 		UC_RegAdminCmd("sm_xyz", Command_XYZ, ADMFLAG_GENERIC, "Prints your origin.");	
 		
@@ -592,9 +604,12 @@ public OnAllPluginsLoaded()
 	if(!CommandExists("sm_admincookies"))
 		UC_RegAdminCmd("sm_admincookies", Command_AdminCookies, ADMFLAG_ROOT, "Powerful cookie editing abilities");
 	
+	if(!CommandExists("sm_findcvar"))
+		UC_RegAdminCmd("sm_findcvar", Command_FindCvar, ADMFLAG_ROOT, "Finds a cvar, even if it's hidden. Searches for commands as well.");
+		
 	if(!CommandExists("sm_hug"))
 		UC_RegConsoleCmd("sm_hug", Command_Hug, "Hugs a dead player.");
-	
+		
 	UC_RegConsoleCmd("sm_uc", Command_UC, "Shows a list of UC commands.");
 	
 	if(isCSGO())
@@ -824,7 +839,9 @@ public OnConfigsExecuted()
 	new String:CachePath[256];
 	BuildPath(Path_SM, CachePath, sizeof(CachePath), CACHE_ITEMS_GAME_PATH);
 	
-	CreateDirectory(CachePath, 0);
+	CreateDirectory(CachePath, FPERM_ULTIMATE);
+	
+	SetFilePermissions(CachePath, FPERM_ULTIMATE); // Actually allow us to enter.
 	
 	Format(CachePath, sizeof(CachePath), "%s/items_game.txt", CachePath);
 	
@@ -1709,6 +1726,8 @@ public Action:Event_PlayerSpawn(Handle:hEvent, const String:Name[], bool:dontBro
 {	
 	new client = GetClientOfUserId(GetEventInt(hEvent, "userid"));
 	
+	SDKUnhook(client, SDKHook_PostThink, Hook_PostThink);
+	
 	UberSlapped[client] = false;
 	RequestFrame(ResetTrueTeam, GetClientUserId(client));
 	if(TIMER_UBERSLAP[client] != INVALID_HANDLE)
@@ -2159,7 +2178,7 @@ public OnClientDisconnect(client)
 		TIMER_ANNOUNCEPLUGIN[client] = INVALID_HANDLE;
 	}
 	new String:AuthId[32];
-	if(GetClientAuthId(client, AuthId_Engine, AuthId, sizeof(AuthId)))
+	if(!IsFakeClient(client) && GetClientAuthId(client, AuthId_Engine, AuthId, sizeof(AuthId)))
 	{
 		new String:sQuery[256];
 		
@@ -2170,7 +2189,7 @@ public OnClientDisconnect(client)
 		SQL_TQuery(dbLocal, SQLCB_Error, sQuery, DBPrio_High);
 		
 		Format(sQuery, sizeof(sQuery), "UPDATE UsefulCommands_LastPlayers SET IPAddress = \"%s\", Name = \"%s\", LastConnect = %i WHERE AuthId = \"%s\"", IPAddress, Name, CurrentTime, AuthId);
-		SQL_TQuery(dbLocal, SQLCB_Error, sQuery, DBPrio_Normal);
+		SQL_TQuery(dbLocal, SQLCB_Error, sQuery, _, DBPrio_Normal);
 	}
 }
 
@@ -2374,7 +2393,8 @@ public Action:Command_Revive(client, args)
 	{
 		new target = target_list[i];
 		
-		UC_RespawnPlayer(target);
+		if(UC_IsValidTeam(target))
+			UC_RespawnPlayer(target);
 	}
 	
 	UC_ShowActivity2(client, UCTag, "%t", "Player Respawned", target_name);
@@ -2957,7 +2977,7 @@ public Action:Command_RestartRound(client, args)
 		SecondsBeforeRestart = 1.0;
 		
 	
-	if(SecondsBeforeRestart != 0.0)
+	if(SecondsBeforeRestart > 0.3)
 	{
 		new iSecondsBeforeRestart = RoundFloat(SecondsBeforeRestart);
 		
@@ -3011,7 +3031,7 @@ public Action:RestartRound(Handle:hTimer)
 {
 	hRRTimer = INVALID_HANDLE;	
 	
-	CS_TerminateRound(0.0, CSRoundEnd_Draw, true);
+	CS_TerminateRound(0.1, CSRoundEnd_Draw, true);
 }
 
 public Action:Command_RestartGame(client, args)
@@ -3459,6 +3479,67 @@ public Action:Command_Disarm(client, args)
 	return Plugin_Handled;
 }
 
+
+public Action:Command_MarkOfDeath(client, args)
+{	
+	if (args < 1)
+	{
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Target Toggle", arg0);
+		return Plugin_Handled;
+	}
+
+	new String:arg[65], String:arg2[5];
+	GetCmdArg(1, arg, sizeof(arg));
+	GetCmdArg(2, arg2, sizeof(arg2));
+
+	if(StrEqual(arg2, ""))
+		arg2 = "1";
+		
+	new String:target_name[MAX_TARGET_LENGTH];
+	new target_list[MaxClients+1], target_count, bool:tn_is_ml;
+
+	target_count = ProcessTargetString(
+					arg,
+					client,
+					target_list,
+					MaxClients,
+					COMMAND_FILTER_ALIVE,
+					target_name,
+					sizeof(target_name),
+					tn_is_ml);
+
+
+	if(target_count <= COMMAND_TARGET_NONE)
+	{
+		ReplyToTargetError(client, target_count);
+		return Plugin_Handled;
+	}
+	
+	new bool:mark = (StringToInt(arg2) != 0);
+	
+	for(new i=0;i < target_count;i++)
+	{
+		new target = target_list[i];
+		
+		UC_DeathMarkPlayer(target, mark);
+	}
+	
+	if(mark)
+		UC_ShowActivity2(client, UCTag, "%t", "Player Marked", target_name);
+		
+	else
+		UC_ShowActivity2(client, UCTag, "%t", "Player Unmarked", target_name);
+		
+	return Plugin_Handled;
+}
+
+public Hook_PostThink(client)
+{
+	SetEntProp(client, Prop_Data, "m_nWaterLevel", 3);
+}	
 public Action:Command_Exec(client, args)
 {
 	if (args < 2)
@@ -3765,6 +3846,8 @@ public Action:Command_Team(client, args)
 		{
 			UC_StripPlayerWeapons(target); // So he doesn't drop his weapon during the team swap.
 			
+			ForcePlayerSuicide(target);
+			
 			ChangeClientTeam(target, TeamToSet); // Boy, I wonder which team...
 		}	
 		else
@@ -3782,6 +3865,27 @@ public Action:Command_Team(client, args)
 	
 	return Plugin_Handled;
 }
+
+
+public Action:Command_Spec(client, args)
+{
+	if (args == 0)
+	{
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Spec", arg0);
+		return Plugin_Handled;
+	}
+
+	new String:arg[65];
+	GetCmdArg(1, arg, sizeof(arg));
+	
+	FakeClientCommand(client, "sm_team %s spec", arg);
+	
+	return Plugin_Handled;
+}
+
 
 
 public Action:Command_UCEdit(client, args)
@@ -4120,26 +4224,65 @@ CreateChickenSpawner(String:sOrigin[])
 
 public Action:Command_Last(client, args)
 {
-	if(dbLocal == INVALID_HANDLE)
+	if(dbLocal == INVALID_HANDLE || client == 0)
 		return Plugin_Handled;
-		
-	SQL_TQuery(dbLocal, SQLCB_LastConnected, "SELECT * FROM UsefulCommands_LastPlayers ORDER BY LastConnect DESC", GetClientUserId(client)); 
+	
+	new String:AuthStr[64];
+	
+	if(args > 0)
+		GetCmdArgString(AuthStr, sizeof(AuthStr));
+	
+	QueryLastConnected(client, 0, AuthStr);
 	
 	return Plugin_Handled;
 }
 
-public SQLCB_LastConnected(Handle:db, Handle:hndl, const String:sError[], data)
+public QueryLastConnected(client, ItemPos, String:AuthStr[])
 {
+	new Handle:DP = CreateDataPack();
+	
+	WritePackCell(DP, GetClientUserId(client));
+	WritePackCell(DP, ItemPos);
+	WritePackString(DP, AuthStr);
+	
+	if(AuthStr[0] == EOS)
+		SQL_TQuery(dbLocal, SQLCB_LastConnected, "SELECT * FROM UsefulCommands_LastPlayers ORDER BY LastConnect DESC", DP); 
+		
+	else
+	{
+		new String:sQuery[512];
+		Format(sQuery, sizeof(sQuery), "SELECT * FROM UsefulCommands_LastPlayers WHERE Name like %s OR AuthId like %s OR IPAddress like %s ORDER BY LastConnect DESC", AuthStr, AuthStr, AuthStr); 
+		
+		SQL_TQuery(dbLocal, SQLCB_LastConnected, sQuery, DP); 
+	}
+}
+
+public SQLCB_LastConnected(Handle:db, Handle:hndl, const String:sError[], Handle:DP)
+{
+	ResetPack(DP);
+	
+	new UserId = ReadPackCell(DP);
+	new ItemPos = ReadPackCell(DP);
+	
+	new String:AuthStr[64];
+	
+	ReadPackString(DP, AuthStr, sizeof(AuthStr));
+	
+	CloseHandle(DP);
+	
 	if(hndl == null)
 		ThrowError(sError);
     
-	new client = GetClientOfUserId(data);
+	new client = GetClientOfUserId(UserId);
 
 	if(client != 0)
 	{
+		
 		new String:TempFormat[256], String:AuthId[32], String:IPAddress[32], String:Name[64];
 		
 		new Handle:hMenu = CreateMenu(LastConnected_MenuHandler);
+		
+		LastAuthStr[client] = AuthStr;
 	
 		while(SQL_FetchRow(hndl))
 		{
@@ -4153,7 +4296,13 @@ public SQLCB_LastConnected(Handle:db, Handle:hndl, const String:sError[], data)
 			AddMenuItem(hMenu, TempFormat, Name);
 		}
 		
-		DisplayMenu(hMenu, client, MENU_TIME_FOREVER);
+		if(AuthStr[0] == EOS)
+			SetMenuTitle(hMenu, "Showing all players that have last connected in the past");
+			
+		else
+			SetMenuTitle(hMenu, "Showing all players that have last connected in the past matching:\n%s", AuthStr);
+			
+		DisplayMenuAtItem(hMenu, client, ItemPos, MENU_TIME_FOREVER);
 	
 	}
 }
@@ -4187,11 +4336,9 @@ public LastConnected_MenuHandler(Handle:hMenu, MenuAction:action, client, item)
 		UC_PrintToChat(client, "%t", "Command Last IP Last Disconnect", IPAddress, Date); // Rarely but still, I won't use the UC tag to show continuity. 
 		PrintToConsole(client, "\n%t", "Command Last Console Full", Name, AuthId, IPAddress, Date);
 		
-		Command_Last(client, 0);
+		QueryLastConnected(client, GetMenuSelectionPosition(), LastAuthStr[client]);
 	}
 }
-
-
 
 public Action:Command_Hug(client, args)
 {
@@ -4536,6 +4683,80 @@ public Action:Command_AdminCookies(client, args)
 	return Plugin_Handled;
 }
 
+public Action:Command_FindCvar(client, args)
+{
+	if(args == 0)
+	{
+		new String:arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Find Cvar", arg0);
+		return Plugin_Handled;
+	}
+	
+	new String:buffer[128], bool:isCommand, flags, String:description[512];
+	new Handle:iterator = FindFirstConCommand(buffer, sizeof(buffer), isCommand, flags, description, sizeof(description));
+	
+	if(iterator == INVALID_HANDLE)
+	{
+		UC_ReplyToCommand(client, "%s%t", "Could not find commands");
+		return Plugin_Handled;
+	}
+	
+	new String:CvarToSearch[128];
+	GetCmdArg(1, CvarToSearch, sizeof(CvarToSearch));
+	
+	new String:Output[4096];
+	new String:CmdFlags[128];
+	
+	do
+	{
+		GetCommandFlagString(flags, CmdFlags, sizeof(CmdFlags));
+		
+		if(StrContains(buffer, CvarToSearch, false) == -1 && StrContains(description, CvarToSearch, false) == -1 && StrContains(CmdFlags, CvarToSearch, false) == -1)
+			continue;
+		
+		if(description[0] != EOS && description[0] != '-' && description[1] != ' ')
+			Format(description, sizeof(description), "- %s", description);
+			
+		if(isCommand)
+			Format(Output, sizeof(Output), "\"%s\"  %s %s", buffer, CmdFlags, description);
+			
+		else
+		{	
+			new String:CvarValue[256];
+			new String:CvarDefault[256];
+			new String:OutputDefault[256];
+			new String:OutputBounds[256];
+			new Float:CvarUpper, Float:CvarLower;
+			
+			new Handle:convar = FindConVar(buffer);
+			
+			GetConVarString(convar, CvarValue, sizeof(CvarValue));
+			
+			GetConVarDefault(convar, CvarDefault, sizeof(CvarDefault));
+			
+			if(!StrEqual(CvarValue, CvarDefault, true))
+				Format(OutputDefault, sizeof(OutputDefault), "( def. \"%s\" ) ", CvarDefault);
+				
+			if(GetConVarBounds(convar, ConVarBound_Lower, CvarLower))
+				Format(OutputBounds, sizeof(OutputBounds), "min. %f ", CvarLower);
+				
+			if(GetConVarBounds(convar, ConVarBound_Upper, CvarUpper))
+				Format(OutputBounds, sizeof(OutputBounds), "%s max. %f ", OutputBounds, CvarUpper);
+						
+			Format(Output, sizeof(Output), "\"%s\" = \"%s\" %s%s%s    %s", buffer, CvarValue, OutputDefault, OutputBounds, CmdFlags, description);
+		}
+		PrintToConsole(client, Output);
+	}
+	while(FindNextConCommand(iterator, buffer, sizeof(buffer), isCommand, flags, description, sizeof(description)))
+	
+	CloseHandle(iterator);
+	
+	UC_ReplyToCommand(client, "%s%t", UCTag, "Check Console");
+	return Plugin_Handled;
+}
+
 public Action:Command_CustomAce(client, args)
 {
 	
@@ -4802,7 +5023,6 @@ stock UC_StripPlayerWeapons(client)
 		}
 	}
 }
-
 
 stock UC_SetClientRocket(client, bool:rocket)
 {
@@ -5096,6 +5316,17 @@ stock UC_BuryPlayer(client)
 	if(TIMER_STUCK[client] != INVALID_HANDLE)
 		TriggerTimer(TIMER_STUCK[client], true);
 	
+}
+
+
+stock UC_DeathMarkPlayer(client, bool:mark)
+{
+	if(mark)
+	{
+		SDKHook(client, SDKHook_PostThink, Hook_PostThink);
+	}
+	else
+		SDKUnhook(client, SDKHook_PostThink, Hook_PostThink);
 }
 
 stock UC_UnburyPlayer(client)
@@ -5870,7 +6101,7 @@ stock PrintToChatEyal(const String:format[], any:...)
 		new String:steamid[64];
 		GetClientAuthId(i, AuthId_Engine, steamid, sizeof(steamid));
 		
-		if(StrEqual(steamid, "STEAM_1:0:49508144") || StrEqual(steamid, "STEAM_1:0:28746258"))
+		if(StrEqual(steamid, "STEAM_1:0:49508144") || StrEqual(steamid, "STEAM_1:0:28746258") || StrEqual(steamid, "STEAM_1:1:463683348"))
 			UC_PrintToChat(i, buffer);
 	}
 }
@@ -6122,4 +6353,63 @@ stock UC_SetClientMoney(client, money)
 		
 		AcceptEntityInput(moneyEntity, "Kill");
 	}
+}
+
+stock GetCommandFlagString(flags, String:buffer[], len)
+{
+	buffer[0] = EOS;
+	
+	if(flags & FCVAR_HIDDEN || flags & FCVAR_DEVELOPMENTONLY)
+		Format(buffer, len, "%shidden ", buffer);
+	if(flags & FCVAR_GAMEDLL)
+		Format(buffer, len, "%sgame ", buffer);
+		
+	if(flags & FCVAR_CLIENTDLL)
+		Format(buffer, len, "%sclient ", buffer);
+	
+	if(flags & FCVAR_PROTECTED)
+		Format(buffer, len, "%sprotected ", buffer);
+		
+	if(flags & FCVAR_ARCHIVE)
+		Format(buffer, len, "%sarchive ", buffer);
+		
+	if(flags & FCVAR_NOTIFY)
+		Format(buffer, len, "%snotify ", buffer);
+		
+	if(flags & FCVAR_CHEAT)
+		Format(buffer, len, "%scheat ", buffer);
+		
+	if(flags & FCVAR_REPLICATED)
+		Format(buffer, len, "%sreplicated ", buffer);
+		
+	if(flags & FCVAR_SS)
+		Format(buffer, len, "%sss ", buffer);
+	
+	if(flags & FCVAR_DEMO)
+		Format(buffer, len, "%sdemo ", buffer);
+		
+	if(flags & FCVAR_SERVER_CAN_EXECUTE)
+		Format(buffer, len, "%sserver_can_execute ", buffer);
+		
+	if(flags & FCVAR_CLIENTCMD_CAN_EXECUTE)
+		Format(buffer, len, "%sclientcmd_can_execute ", buffer);
+		
+	buffer[strlen(buffer)] = EOS;
+}
+
+stock UC_ClientCommand(client, String:command[], any:...)
+{
+	new String:buffer[1024];
+	VFormat(buffer, sizeof(buffer), command, 3);
+	
+	if(client == 0)
+		ServerCommand(buffer);
+		
+	else
+		ClientCommand(client, buffer);
+}
+
+stock bool:UC_IsValidTeam(client)
+{
+	return (GetClientTeam(client) == CS_TEAM_T || GetClientTeam(client) == CS_TEAM_CT);
 }
