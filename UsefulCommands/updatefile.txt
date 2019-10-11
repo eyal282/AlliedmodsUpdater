@@ -2,7 +2,7 @@
 {
 	"Version"
 	{
-		"Latest"	"4.1"
+		"Latest"	"4.2"
 	}
 	
 	"Notes"	"!respawn which behaves exactly like !revive"
