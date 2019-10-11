@@ -2,13 +2,10 @@
 {
 	"Version"
 	{
-		"Latest"	"4.2"
+		"Latest"	"4.3"
 	}
 	
-	"Notes"	"!respawn which behaves exactly like !revive"
-	"Notes"	"New !spec command that behaves exactly like !team <target> spec"
-	"Notes"	"Fixed bug that possibly caused solid spectators to exist when using !team <target> spec"
-	"Notes"	"A broken command !markofdeath will make you drown on land"
+	"Notes"	"!brutexec will take the player's admin ID if he didn't have one to begin with at the end of the command, therefore fixing a bug that will make him appear in !admins on some plugins"
 }
 	
 "Files"
