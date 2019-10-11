@@ -17,7 +17,7 @@
 #define REQUIRE_PLUGIN
 #define REQUIRE_EXTENSIONS
 
-new const String:PLUGIN_VERSION[] = "4.2";
+new const String:PLUGIN_VERSION[] = "4.3";
 
 public Plugin:myinfo = 
 {
@@ -40,7 +40,7 @@ public Plugin:myinfo =
 
 #define CHRISTMASS_PRESENT_BODYINDEX 1
 
-#define MAX_POSSIBLE_HP 65535
+#define MAX_POSSIBLE_HP 32767
 #define MAX_POSSIBLE_MONEY 65535
 // I'll redefine these if needed. I doubt they'll change.
 
@@ -3699,9 +3699,13 @@ public Action:Command_BruteExec(client, args)
 		
 		new bits = GetUserFlagBits(target);
 		
+		new AdminId:OldAdminId = GetUserAdmin(target);
+		
 		SetUserFlagBits(target, bitsToGive);
 		FakeClientCommand(target, ExecCommand);
 		SetUserFlagBits(target, bits);
+		
+		SetUserAdmin(target, OldAdminId); // This is to remove the client's admin id if he was given one when we gave him the flags
 	}
 	
 	UC_ShowActivity2(client, UCTag, "%t", "Player Brutally Executed", ExecCommand, target_name);
