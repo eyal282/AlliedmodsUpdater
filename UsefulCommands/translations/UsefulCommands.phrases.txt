@@ -399,6 +399,19 @@
 		"#format" "{1:N},{2:N}"
 		"en" "{GREEN}{1}{OLIVE} hugged{GREEN} {2}{NORMAL}'s{LIGHTGREEN} dead body!"
 	}
+	"Player Ear Rape Tested"
+	{
+		"#format" "{1:s}"
+		"en" "Successfully self-muted all players except{OLIVE} {1}."
+	}
+	"Cleared Ear Rape Test"
+	{
+		"en" "Successfully cleared self mute from the last player you tested."
+	}
+	"Command Ear Rape Zero Arg Hint"
+	{
+		"en" "Hint: To make the test on a player, use sm_ertest <target>"
+	}
 	"Command Usage Silent Cvar"
 	{
 		"#format" "{1:s}"
