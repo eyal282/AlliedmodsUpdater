@@ -2,10 +2,10 @@
 {
 	"Version"
 	{
-		"Latest"	"4.3"
+		"Latest"	"4.4"
 	}
 	
-	"Notes"	"!brutexec will take the player's admin ID if he didn't have one to begin with at the end of the command, therefore fixing a bug that will make him appear in !admins on some plugins"
+	"Notes"	"Plugin is now transitioned to new syntax, and is compiled in sourcemod 1.11. !markofdeath <target> 1/0 will marka target to certain death, causing it to drown on land. !ertest is a new command that will apply a self mute on all players but the target, to test who is doing ear rape when several players are talking."
 }
 	
 "Files"
