@@ -20,7 +20,7 @@
 
 #pragma newdecls required
 
-char PLUGIN_VERSION[] = "4.5";
+char PLUGIN_VERSION[] = "4.6";
 
 public Plugin myinfo = 
 {
@@ -690,9 +690,6 @@ public void OnAllPluginsLoaded()
 		
 	if(!CommandExists("sm_disarm"))
 		UC_RegAdminCmd("sm_disarm", Command_Disarm, ADMFLAG_BAN, "Strips all of the player's weapons");	
-		
-	if(!CommandExists("sm_markofdeath"))
-		UC_RegAdminCmd("sm_markofdeath", Command_MarkOfDeath, ADMFLAG_BAN, "Marks the target with the mark of death, slowly murdering him");
 	
 	if(!CommandExists("sm_ertest"))
 		UC_RegAdminCmd("sm_ertest", Command_EarRapeTest, ADMFLAG_CHAT, "Mutes all players except target. Mutes are for the admin himself only to secretly find who's making earrape when 5 players talk simulatenously");
@@ -1866,8 +1863,7 @@ public Action Event_PlayerSpawn(Handle hEvent, const char[] Name, bool dontBroad
 {	
 	int client = GetClientOfUserId(GetEventInt(hEvent, "userid"));
 	
-	SDKUnhook(client, SDKHook_PostThink, Hook_PostThink);
-	
+	//SetEntityFlags(client, GetEntityFlags(client) & ~FL_INWATER);
 	UberSlapped[client] = false;
 	RequestFrame(ResetTrueTeam, GetClientUserId(client));
 	if(TIMER_UBERSLAP[client] != INVALID_HANDLE)
@@ -2838,7 +2834,7 @@ public Action Timer_UberSlap(Handle hTimer, int UserId)
 	}
 		
 	TotalSlaps[client]++;
-	if(TotalSlaps[client] >= 100 || (!UC_UnlethalSlap(client, 1) && TotalSlaps[client] >= 10))
+	if(TotalSlaps[client] >= 100 || (UC_UnlethalSlap(client, 1) && TotalSlaps[client] >= 10))
 	{
 		UberSlapped[client] = false;
 		TIMER_UBERSLAP[client] = INVALID_HANDLE;
@@ -3566,8 +3562,8 @@ public Action Command_GoTo(int client, int args)
 	GetEntPropVector(target, Prop_Data, "m_vecOrigin", Origin);
 	
 	if(
-	view_as<Collision_Group_t>(GetEntProp(client, Prop_Send, "m_CollisionGroup")) == COLLISION_GROUP_DEBRIS_TRIGGER && view_as<Collision_Group_t>(GetEntProp(target, Prop_Send, "m_CollisionGroup")) == COLLISION_GROUP_DEBRIS_TRIGGER
-	|| GetConVarBool(hcv_SolidTeammates) && GetClientTeam(client) == GetClientTeam(target)
+	(view_as<Collision_Group_t>(GetEntProp(client, Prop_Send, "m_CollisionGroup")) == COLLISION_GROUP_DEBRIS_TRIGGER && view_as<Collision_Group_t>(GetEntProp(target, Prop_Send, "m_CollisionGroup")) == COLLISION_GROUP_DEBRIS_TRIGGER)
+	|| (hcv_SolidTeammates != INVALID_HANDLE && GetConVarInt(hcv_SolidTeammates) != 1 && GetClientTeam(client) == GetClientTeam(target))
 	)
 	{
 		TeleportEntity(client, Origin, NULL_VECTOR, NULL_VECTOR);
@@ -3777,7 +3773,7 @@ public Action Command_Disarm(int client, int args)
 	return Plugin_Handled;
 }
 
-
+/*
 public Action Command_MarkOfDeath(int client, int args)
 {	
 	if (args < 1)
@@ -3835,7 +3831,7 @@ public Action Command_MarkOfDeath(int client, int args)
 		
 	return Plugin_Handled;
 }
-
+*/
 public Action Command_EarRapeTest(int client, int args)
 {
 	if (args < 1)
@@ -3895,7 +3891,7 @@ public Action Command_EarRapeTest(int client, int args)
 
 public void Hook_PostThink(int client)
 {
-	SetEntProp(client, Prop_Data, "m_nWaterLevel", 3);
+	SetEntProp(client, Prop_Send, "m_nWaterLevel", 3);
 }	
 
 public Action Command_Exec(int client, int args)
@@ -5365,6 +5361,7 @@ public Action Command_UC(int client, int args)
 	
 	char buffer[256];
 	
+	PrintToChat(client, "%i", GetEntProp(client, Prop_Send, "m_nWaterLevel"));
 	if(isCSGO())
 		AddMenuItem(hMenu, "sm_settings", "sm_settings");
 	
@@ -5711,7 +5708,7 @@ stock void UC_BuryPlayer(int client)
 	
 }
 
-
+/*
 stock void UC_DeathMarkPlayer(int client, bool mark)
 {
 	if(mark)
@@ -5721,7 +5718,7 @@ stock void UC_DeathMarkPlayer(int client, bool mark)
 	else
 		SDKUnhook(client, SDKHook_PostThink, Hook_PostThink);
 }
-
+*/
 stock void UC_UnburyPlayer(int client)
 {
 	float Origin[3];
