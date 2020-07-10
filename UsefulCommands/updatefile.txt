@@ -2,11 +2,10 @@
 {
 	"Version"
 	{
-		"Latest"	"4.6"
+		"Latest"	"4.7"
 	}
 	
-	"Notes"	"Fixed !goto bug not allowing you to teleport to a player."
-	"Notes" "Removed !markofdeath for being a broken command."
+	"Notes"	"Fixed !heal typing."
 }
 	
 "Files"
