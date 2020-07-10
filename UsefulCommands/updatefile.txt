@@ -2,11 +2,11 @@
 {
 	"Version"
 	{
-		"Latest"	"4.5"
+		"Latest"	"4.6"
 	}
 	
-	"Notes"	"New commands! !hp acts exactly like !heal, !bring acts exactly like !blink"
-	"Notes" "New command !goto will teleport you to your target"
+	"Notes"	"Fixed !goto bug not allowing you to teleport to a player."
+	"Notes" "Removed !markofdeath for being a broken command."
 }
 	
 "Files"
