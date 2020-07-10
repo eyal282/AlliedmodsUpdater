@@ -213,6 +213,11 @@
 		"#format"	"{1:N}"
 		"en" "Admin{GREEN} {1}{NORMAL} stopped the{LIGHTGREEN} server restart{NORMAL}!"
 	}
+	"Restart Server Blocked By Other Plugin"
+	{
+		"#format"	"{1:i}"
+		"en" "Due to another plugin, you need to set at least {1} seconds for the restart."
+	}
 	"Command Usage Glow"
 	{
 		"#format"	"{1:s}"
@@ -250,6 +255,11 @@
 	{
 		"#format"	"{1:s}"
 		"en" "teleported {1} to aim position."
+	}
+	"Teleported to Player"
+	{
+		"#format"	"{1:s}"
+		"en" "teleported to {1}'s position."
 	}
 	"Already Godmode"
 	{
