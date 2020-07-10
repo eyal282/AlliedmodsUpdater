@@ -1,7 +1,3 @@
-/* put the line below after all of the includes!
-#pragma newdecls required
-*/
-
 // To do: Add weapon stats comparison based on what I used with Big Bertha
 
 #include <sourcemod>
@@ -9,6 +5,7 @@
 #include <sdktools>
 #include <cstrike>
 #include <clientprefs>
+#include <emitsoundany>
 
 #undef REQUIRE_PLUGIN
 #undef REQUIRE_EXTENSIONS
@@ -21,7 +18,9 @@
 #define REQUIRE_PLUGIN
 #define REQUIRE_EXTENSIONS
 
-char PLUGIN_VERSION[] = "4.4";
+#pragma newdecls required
+
+char PLUGIN_VERSION[] = "4.5";
 
 public Plugin myinfo = 
 {
@@ -31,6 +30,35 @@ public Plugin myinfo =
 	version = PLUGIN_VERSION,
 	url = "https://forums.alliedmods.net/showthread.php?p=2617618"
 }
+
+
+enum Collision_Group_t
+{
+    COLLISION_GROUP_NONE  = 0,
+    COLLISION_GROUP_DEBRIS,            // Collides with nothing but world and static stuff
+    COLLISION_GROUP_DEBRIS_TRIGGER, // Same as debris, but hits triggers
+    COLLISION_GROUP_INTERACTIVE_DEBRIS,    // Collides with everything except other interactive debris or debris
+    COLLISION_GROUP_INTERACTIVE,    // Collides with everything except interactive debris or debris
+    COLLISION_GROUP_PLAYER,
+    COLLISION_GROUP_BREAKABLE_GLASS,
+    COLLISION_GROUP_VEHICLE,
+    COLLISION_GROUP_PLAYER_MOVEMENT,  // For HL2, same as Collision_Group_Player, for
+                                        // TF2, this filters out other players and CBaseObjects
+    COLLISION_GROUP_NPC,            // Generic NPC group
+    COLLISION_GROUP_IN_VEHICLE,        // for any entity inside a vehicle
+    COLLISION_GROUP_WEAPON,            // for any weapons that need collision detection
+    COLLISION_GROUP_VEHICLE_CLIP,    // vehicle clip brush to restrict vehicle movement
+    COLLISION_GROUP_PROJECTILE,        // Projectiles!
+    COLLISION_GROUP_DOOR_BLOCKER,    // Blocks entities not permitted to get near moving doors
+    COLLISION_GROUP_PASSABLE_DOOR,    // Doors that the player shouldn't collide with
+    COLLISION_GROUP_DISSOLVING,        // Things that are dissolving are in this group
+    COLLISION_GROUP_PUSHAWAY,        // Nonsolid on client and server, pushaway in player code
+
+    COLLISION_GROUP_NPC_ACTOR,        // Used so NPCs in scripts ignore the player.
+    COLLISION_GROUP_NPC_SCRIPTED,    // USed for NPCs in scripts that should not collide with each other
+
+    LAST_SHARED_COLLISION_GROUP
+}; 
 
 #define FPERM_ULTIMATE (FPERM_U_READ|FPERM_U_WRITE|FPERM_U_EXEC|FPERM_G_READ|FPERM_G_WRITE|FPERM_G_EXEC|FPERM_O_READ|FPERM_O_WRITE|FPERM_O_EXEC)
 
@@ -144,9 +172,6 @@ enum Render
 char PartySound[] = "weapons/party_horn_01.wav";
 char ItemPickUpSound[] = "items/pickup_weapon_02.wav";
 
-bool g_bCheckedEngine = false;
-bool g_bNeedsFakePrecache = false;
-
 float DeathOrigin[MAXPLAYERS+1][3];
 
 bool UberSlapped[MAXPLAYERS+1];
@@ -159,6 +184,7 @@ Handle Trie_CoinLevelValues = INVALID_HANDLE;
 
 Handle hcv_PartyMode = INVALID_HANDLE;
 Handle hcv_mpAnyoneCanPickupC4 = INVALID_HANDLE;
+Handle hcv_SolidTeammates = INVALID_HANDLE;
 //new Handle:hcv_svCheats = INVALID_HANDLE;
 //new svCheatsFlags = 0;
 
@@ -201,6 +227,9 @@ Handle TeleportsArray = INVALID_HANDLE;
 Handle BombResetsArray = INVALID_HANDLE;
 Handle ChickenOriginArray = INVALID_HANDLE;
 
+Handle fw_ucCountServerRestart = INVALID_HANDLE;
+Handle fw_ucNotifyServerRestart = INVALID_HANDLE;
+Handle fw_ucServerRestartAborted = INVALID_HANDLE;
 Handle fw_ucAce = INVALID_HANDLE;
 Handle fw_ucAcePost = INVALID_HANDLE;
 Handle fw_ucWeaponStatsRetrievedPost = INVALID_HANDLE;
@@ -217,9 +246,11 @@ char LastAuthStr[MAXPLAYERS+1][64];
 float LastHeight[MAXPLAYERS+1];
 
 Handle hRestartTimer = INVALID_HANDLE;
+Handle hNotifyRestartTimer = INVALID_HANDLE;
 Handle hRRTimer = INVALID_HANDLE;
 
 bool RestartNR = false;
+int RestartTimestamp = 0;
 
 Handle hcv_TagScale = INVALID_HANDLE;
 
@@ -304,6 +335,7 @@ public APLRes AskPluginLoad2(Handle myself, bool bLate, char[] error, int length
 	
 	CreateNative("UsefulCommands_GetWeaponStats", Native_GetWeaponStatsList);
 	CreateNative("UsefulCommands_ApproximateClientRank", Native_ApproximateClientRank);
+	CreateNative("UsefulCommands_IsServerRestartScheduled", Native_IsServerRestartScheduled);
 }
 
 // native int UsefulCommands_GetWeaponStats(CSWeaponID WeaponID, int StatsList[])
@@ -355,6 +387,105 @@ public int Native_ApproximateClientRank(Handle caller, int numParams)
 	return rank;
 }
 
+// native bool UsefulCommands_IsServerRestartScheduled();
+public int Native_IsServerRestartScheduled(Handle caller, int numParams)
+{
+	if(hRestartTimer != INVALID_HANDLE || RestartNR)
+		return true;
+		
+	return false;
+}
+
+/*
+* This forward is fired when an admin uses !restart [seconds]
+
+* @return  					Amount of seconds your plugin demands waiting before restart is made. If returning more than the time input by !restart, it will fail.
+*
+*
+* @notes					!restart defaults to 5 seconds. Returning more than that may burden the admins.
+* @notes					While a completely bad practice, to stop all restarts you can workaround returning the biggest integer possible, 2147483647
+*/
+
+forward int UsefulCommands_OnCountServerRestart();
+
+/*
+* This forward is fired x seconds before restart, x being the highest returned value from the forward UsefulCommands_OnCountServerRestart
+*
+* @param SecondsLeft		Amount of seconds left before the restart, or -1 if the restart is scheduled to next round.
+*
+* @noreturn 
+*
+*
+* @notes					This is called immediately on a next round based server restart
+*/
+
+forward void UsefulCommands_OnNotifyServerRestart(int SecondsLeft);
+
+/*
+* This forward is fired when an admin stops the server restart.
+*
+* @noreturn 
+*/
+
+forward void UsefulCommands_OnServerRestartAborted();
+	
+/*
+* On Player Ace
+*
+* @param client				client index.
+* @param FunFact			Fun Fact that appears on top of the screen.
+* @param Kills				Kills done this round.
+
+* @return  					Plugin_Continue to ignore, Plugin_Changed when changing a parameter, Plugin_Handled to block fun fact change,
+							Plugin_Stop to stop both fun fact change and the post forward.
+*
+*
+* @notes					Note: this forward may call more than once during a single ace.
+*/
+
+forward Action UsefulCommands_OnPlayerAce(int &client, char[] FunFact, int Kills);
+
+	
+/*
+* On Player Ace Post
+*
+* @param client				client index.
+* @param FunFact			Fun Fact that appears on top of the screen.
+* @param Kills				Kills done this round.
+
+* @noreturn
+*
+*
+* @notes					Although the pre ace forward may call more than once in a single ace, this forward will only call once per ace.
+*/
+
+forward void UsefulCommands_OnPlayerAcePost(int client, const char[] FunFact, int Kills);
+
+
+
+/*
+* Called when the weapon stats natives can be used.
+*
+* @noreturn
+*/
+
+forward void UsefulCommands_OnWeaponStatsRetrievedPost();
+
+
+
+
+
+
+public void UsefulCommands_OnPlayerAcePost(int client, const char[] FunFact, int Kills)
+{
+	if(GetConVarInt(hcv_ucAcePriority) > 0)
+	{
+		UC_PrintToChatAll("%s%t", UCTag, "Scored an Ace", client);
+	}
+}
+	
+
+
 public void OnPluginStart()
 {
 	GameName = GetEngineVersion();
@@ -372,28 +503,12 @@ public void OnPluginStart()
 	LoadTranslations("common.phrases");
 	LoadTranslations("clientprefs.phrases");
 	
+	fw_ucCountServerRestart = CreateGlobalForward("UsefulCommands_OnCountServerRestart", ET_Event);
+	fw_ucNotifyServerRestart = CreateGlobalForward("UsefulCommands_OnNotifyServerRestart", ET_Ignore, Param_Cell);
+	fw_ucServerRestartAborted = CreateGlobalForward("UsefulCommands_OnServerRestartAborted", ET_Ignore);
 	fw_ucAce = CreateGlobalForward("UsefulCommands_OnPlayerAce", ET_Event, Param_CellByRef, Param_String, Param_CellByRef);
 	fw_ucAcePost = CreateGlobalForward("UsefulCommands_OnPlayerAcePost", ET_Ignore, Param_Cell, Param_String, Param_Cell);
 	fw_ucWeaponStatsRetrievedPost = CreateGlobalForward("UsefulCommands_OnWeaponStatsRetrievedPost", ET_Ignore);
-	
-	// public UsefulCommands_OnPlayerAce(&client, String:FunFact[], Kills)
-	
-	// param &client = Client that made an ace.
-	// param String:FunFact[] = Copyback fun fact for the client.
-	// param Kills = Amount of kills the client made in the round.
-	
-	// return = Plugin_Changed when changing a parameter, Plugin_Handled to block fun fact change, Plugin_Stop to stop both fun fact change and the post forward.
-	// Note: this forward may call more than once during a single ace.
-	
-	// public UsefulCommands_OnPlayerAcePost(client, const String:FunFact[], Kills)
-	// param &client = Client that made an ace.
-	// param String:FunFact[] = Copyback fun fact for the client.
-	// param Kills = Amount of kills the client made in the round.
-	
-	// return = No return.
-	// Note: Although the pre ace forward may call more than once in a single ace, this forward will only call once per ace.
-	
-	// public UsefulCommands_OnWeaponStatsRetrievedPost()
 
 	
 	//hcv_svCheats = FindConVar("sv_cheats");
@@ -438,11 +553,9 @@ public void OnPluginStart()
 		if(BombResetsArray == INVALID_HANDLE)
 			BombResetsArray = CreateArray(1);
 		
-		if(!IsSoundPrecached(PartySound)) // Problems with the listen server...
-			PrecacheSoundAny(PartySound);
+		PrecacheSoundAny(PartySound);
 		
-		if(!IsSoundPrecached(ItemPickUpSound))
-			PrecacheSoundAny(ItemPickUpSound);
+		PrecacheSoundAny(ItemPickUpSound);
 	}
 	
 	HookEvent("player_spawn", Event_PlayerSpawn, EventHookMode_Post);
@@ -467,10 +580,8 @@ public void OnPluginStart()
 			if(!IsClientInGame(i))
 				continue;
 				
-			OnClientPutInServer(i);
+			Func_OnClientPutInServer(i);
 		}
-		
-		OnMapStart();
 	}
 }
 
@@ -532,6 +643,9 @@ public void OnAllPluginsLoaded()
 	if(!CommandExists("sm_heal"))
 		UC_RegAdminCmd("sm_heal", Command_Heal, ADMFLAG_BAN, "Allows to either heal a player, give him armor or a helmet.");
 		
+	if(!CommandExists("sm_hp"))
+		UC_RegAdminCmd("sm_hp", Command_Heal, ADMFLAG_BAN, "Allows to either heal a player, give him armor or a helmet.");
+		
 	if(!CommandExists("sm_give"))
 		UC_RegAdminCmd("sm_give", Command_Give, ADMFLAG_CHEATS, "Give a weapon for a player.");
 		
@@ -558,6 +672,12 @@ public void OnAllPluginsLoaded()
 		
 	if(!CommandExists("sm_blink"))
 		UC_RegAdminCmd("sm_blink", Command_Blink, ADMFLAG_BAN, "Teleports the player to where you are aiming");
+		
+	if(!CommandExists("sm_bring"))
+		UC_RegAdminCmd("sm_bring", Command_Blink, ADMFLAG_BAN, "Teleports the player to where you are aiming");
+		
+	if(!CommandExists("sm_goto"))
+		UC_RegAdminCmd("sm_goto", Command_GoTo, ADMFLAG_BAN, "Teleports you to the given target");
 		
 	if(!CommandExists("sm_godmode"))
 		UC_RegAdminCmd("sm_godmode", Command_Godmode, ADMFLAG_BAN, "Makes player immune to damage, not necessarily to death.");
@@ -640,6 +760,7 @@ public void OnAllPluginsLoaded()
 		hCookie_AceFunFact = RegClientCookie("UsefulCommands_AceFunFact", "When you make an ace, this will be the fun fact to send to the server. $name -> your name. $team -> your team. $opteam -> your opponent team.", CookieAccess_Public);	
 		
 		hcv_mpAnyoneCanPickupC4 = FindConVar("mp_anyone_can_pickup_c4");
+		hcv_SolidTeammates = FindConVar("mp_solid_teammates");
 		
 		HookConVarChange(hcv_ucSpecialC4Rules, OnSpecialC4RulesChanged);
 			
@@ -1448,7 +1569,7 @@ public Action Event_PlayerUse(Handle hEvent, const char[] Name, bool dontBroadca
 }
 
 public Action Event_RoundEnd(Handle hEvent, const char[] Name, bool dontBroadcast)
-{	
+{
 	if(isCSGO())
 		return Plugin_Continue;
 	
@@ -1482,7 +1603,7 @@ public Action Event_RoundEnd(Handle hEvent, const char[] Name, bool dontBroadcas
 }
 public Action Event_RoundStart(Handle hEvent, const char[] Name, bool dontBroadcast)
 {
-	if(RestartNR)
+	if(RestartNR && RestartTimestamp <= GetTime())
 	{
 		CreateTimer(0.5, RestartServer, _, TIMER_FLAG_NO_MAPCHANGE);
 	}
@@ -1658,6 +1779,9 @@ public Action:Event_OnChickenKilled(victim, &attacker, &inflictor, &Float:damage
 */
 public int PartyModeCookieMenu_Handler(int client, CookieMenuAction action, int info, char[] buffer, int maxlen)
 {
+	if(action != CookieMenuAction_SelectOption)
+		return;
+		
 	if(!GetConVarBool(hcv_ucPartyMode))	
 	{
 		ShowCookieMenu(client);
@@ -1675,25 +1799,25 @@ public void ShowPartyModeMenu(int client)
 	{
 		case PARTYMODE_DEFUSE:
 		{
-			Format(TempFormat, sizeof(TempFormat), "%T", "Party Mode Cookie Menu  Defuse Only", client);
+			Format(TempFormat, sizeof(TempFormat), "%T", "Party Mode Cookie Menu: Defuse Only", client);
 			AddMenuItem(hMenu, "", TempFormat);	
 		}	
 		
 		case PARTYMODE_ZEUS:
 		{
-			Format(TempFormat, sizeof(TempFormat), "%T", "Party Mode Cookie Menu  Zeus Only", client);
+			Format(TempFormat, sizeof(TempFormat), "%T", "Party Mode Cookie Menu: Zeus Only", client);
 			AddMenuItem(hMenu, "", TempFormat);	
 		}
 		
 		case PARTYMODE_DEFUSE|PARTYMODE_ZEUS:
 		{
-			Format(TempFormat, sizeof(TempFormat), "%T", "Party Mode Cookie Menu  Enabled", client);
+			Format(TempFormat, sizeof(TempFormat), "%T", "Party Mode Cookie Menu: Enabled", client);
 			AddMenuItem(hMenu, "", TempFormat);
 		}
 		
 		default:
 		{
-			Format(TempFormat, sizeof(TempFormat), "%T", "Party Mode Cookie Menu  Disabled", client);
+			Format(TempFormat, sizeof(TempFormat), "%T", "Party Mode Cookie Menu: Disabled", client);
 			AddMenuItem(hMenu, "", TempFormat);
 		}
 	}
@@ -1711,7 +1835,7 @@ public int PartyModeMenu_Handler(Handle hMenu, MenuAction action, int client, in
 	{
 		return ITEMDRAW_DEFAULT;
 	}
-	else if(item == MenuCancel_ExitBack)
+	else if(action == MenuAction_Cancel && item == MenuCancel_ExitBack)
 	{
 		ShowCookieMenu(client);
 	}
@@ -1991,15 +2115,12 @@ public Action Event_CsWinPanelRound(Handle hEvent, const char[] Name, bool dontB
 	return Plugin_Changed;
 }
 
-public void UsefulCommands_OnPlayerAcePost(int client, const char[] FunFact)
+public void OnClientPutInServer(int client)
 {
-	if(GetConVarInt(hcv_ucAcePriority) > 0)
-	{
-		UC_PrintToChatAll("%s%t", UCTag, "Scored an Ace", client);
-	}
+	Func_OnClientPutInServer(client);
 }
 
-public void OnClientPutInServer(int client)
+public void Func_OnClientPutInServer(int client)
 {
 	DeathOrigin[client] = NULL_VECTOR;
 	UberSlapped[client] = false;
@@ -2347,6 +2468,7 @@ public void OnMapStart()
 	}
 	
 	hRestartTimer = INVALID_HANDLE;
+	hNotifyRestartTimer = INVALID_HANDLE;
 	hRRTimer = INVALID_HANDLE;
 	RestartNR = false;
 	
@@ -2714,10 +2836,9 @@ public Action Timer_UberSlap(Handle hTimer, int UserId)
 		TIMER_UBERSLAP[client] = INVALID_HANDLE;
 		return Plugin_Stop;
 	}
-	
-	UC_UnlethalSlap(client, 1);
+		
 	TotalSlaps[client]++;
-	if(TotalSlaps[client] == 100)
+	if(TotalSlaps[client] >= 100 || (!UC_UnlethalSlap(client, 1) && TotalSlaps[client] >= 10))
 	{
 		UberSlapped[client] = false;
 		TIMER_UBERSLAP[client] = INVALID_HANDLE;
@@ -3125,15 +3246,20 @@ public Action Command_RestartServer(int client, int args)
 				SecondsBeforeRestart = 5;
 			
 			if(SecondsBeforeRestart == 0)
+				return Plugin_Handled;
+			
+			int result;
+			Call_StartForward(fw_ucCountServerRestart);
+			
+			Call_Finish(result);
+			
+			if(result > SecondsBeforeRestart)
 			{
-				if(hRestartTimer != INVALID_HANDLE)
-				{
-					CloseHandle(hRestartTimer);
-					hRestartTimer = INVALID_HANDLE;
-				}
+				UC_ReplyToCommand(client, "%s%t", UCTag, "Restart Server Blocked By Other Plugin", result);
 				return Plugin_Handled;
 			}
 			
+			hNotifyRestartTimer = CreateTimer(float(SecondsBeforeRestart - result), NotifyRestartServer, result, TIMER_FLAG_NO_MAPCHANGE);
 			hRestartTimer = CreateTimer(float(SecondsBeforeRestart), RestartServer, _, TIMER_FLAG_NO_MAPCHANGE);
 			
 			if(SecondsBeforeRestart == 1)
@@ -3146,7 +3272,22 @@ public Action Command_RestartServer(int client, int args)
 		}
 		else
 		{
+			RestartTimestamp = 0;
+			
+			Call_StartForward(fw_ucCountServerRestart);
+			
+			Call_Finish(RestartTimestamp);
+			
 			RestartNR = true;
+			
+			RestartTimestamp += GetTime();
+			
+			Call_StartForward(fw_ucNotifyServerRestart);
+			
+			Call_PushCell(-1);
+			
+			Call_Finish();
+			
 			UC_PrintToChatAll("%s%t", UCTag, "Admin Restart Server Next Round", client);
 		}
 	}
@@ -3155,6 +3296,13 @@ public Action Command_RestartServer(int client, int args)
 		CloseHandle(hRestartTimer);
 		hRestartTimer = INVALID_HANDLE;
 		
+		CloseHandle(hNotifyRestartTimer);
+		hNotifyRestartTimer = INVALID_HANDLE;
+		
+		Call_StartForward(fw_ucServerRestartAborted);
+		
+		Call_Finish();
+		
 		RestartNR = false;
 		UC_PrintToChatAll("%s%t", UCTag, "Admin Stopped Restart Server", client);
 	}
@@ -3162,9 +3310,18 @@ public Action Command_RestartServer(int client, int args)
 	return Plugin_Handled;
 }
 
+public Action NotifyRestartServer(Handle hTimer, int SecondsLeft)
+{
+	Call_StartForward(fw_ucNotifyServerRestart);
+	
+	Call_PushCell(SecondsLeft);
+	
+	Call_Finish();
+}
 public Action RestartServer(Handle hTimer)
 {
 	hRestartTimer = INVALID_HANDLE;	
+	hNotifyRestartTimer = INVALID_HANDLE;
 	
 	UC_RestartServer();
 }
@@ -3321,10 +3478,17 @@ public Action Command_Blink(int client, int args)
 		return Plugin_Handled;
 	}
 	
+	bool self = false;
+	
 	for(int i=0;i < target_count;i++)
 	{
 		int target = target_list[i];
 		
+		if(client == target)
+		{
+			self = true;
+			continue;
+		}
 		float Origin[3];
 		if(!UC_GetAimPositionBySize(client, target, Origin))
 		{
@@ -3335,10 +3499,99 @@ public Action Command_Blink(int client, int args)
 		TeleportEntity(target, Origin, NULL_VECTOR, NULL_VECTOR);
 	}
 	
+	if(self)
+	{
+		float Origin[3];
+		if(!UC_GetAimPositionBySize(client, client, Origin))
+		{
+			ReplyToCommand(client, "Cannot teleport");
+			return Plugin_Handled;
+		}
+		
+		TeleportEntity(client, Origin, NULL_VECTOR, NULL_VECTOR);
+	}
+	
 	UC_ShowActivity2(client, UCTag, "%t", "Player Blinked", target_name); 
 	
 	return Plugin_Handled;
 }
+
+
+public Action Command_GoTo(int client, int args)
+{
+	if (args < 1)
+	{
+		char arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Target", arg0);
+		return Plugin_Handled;
+	}
+
+	char arg[65];
+	GetCmdArg(1, arg, sizeof(arg));
+
+	char target_name[MAX_TARGET_LENGTH];
+	int[] target_list = new int[MaxClients+1];
+	int target_count;
+	bool tn_is_ml;
+
+	target_count = ProcessTargetString(
+					arg,
+					client,
+					target_list,
+					MaxClients,
+					COMMAND_FILTER_ALIVE|COMMAND_FILTER_NO_MULTI,
+					target_name,
+					sizeof(target_name),
+					tn_is_ml);
+
+
+	if(target_count <= COMMAND_TARGET_NONE) 	// If we don't have dead players
+	{
+		ReplyToTargetError(client, target_count);
+		return Plugin_Handled;
+	}
+	
+	int target = target_list[0];
+		
+	if(client == target)
+	{
+		ReplyToTargetError(client, COMMAND_TARGET_IMMUNE);
+		return Plugin_Handled;
+	}
+	
+	float Origin[3];
+	
+	GetEntPropVector(target, Prop_Data, "m_vecOrigin", Origin);
+	
+	if(
+	view_as<Collision_Group_t>(GetEntProp(client, Prop_Send, "m_CollisionGroup")) == COLLISION_GROUP_DEBRIS_TRIGGER && view_as<Collision_Group_t>(GetEntProp(target, Prop_Send, "m_CollisionGroup")) == COLLISION_GROUP_DEBRIS_TRIGGER
+	|| GetConVarBool(hcv_SolidTeammates) && GetClientTeam(client) == GetClientTeam(target)
+	)
+	{
+		TeleportEntity(client, Origin, NULL_VECTOR, NULL_VECTOR);
+	}
+	else
+	{
+		float HeightOffset = 73.0;
+		
+		if(IsPlayerStuck(client, Origin, HeightOffset))
+		{
+			ReplyToCommand(client, "Cannot teleport");
+			return Plugin_Handled;
+		}
+		
+		Origin[2] += HeightOffset;
+		
+		TeleportEntity(client, Origin, NULL_VECTOR, NULL_VECTOR);
+	}
+	
+	UC_ShowActivity2(client, UCTag, "%t", "Teleported to Player", target_name); 
+	
+	return Plugin_Handled;
+}
+
 
 public Action Command_Godmode(int client, int args)
 {
@@ -4552,8 +4805,7 @@ public Action Command_XYZ(int client, int args)
 	float Origin[3];
 	GetEntPropVector(client, Prop_Data, "m_vecOrigin", Origin);
 	
-	UC_PrintToChat(client, "X, Y, Z = %.3f, %.3f, %3f", Origin[0], Origin[1], Origin[2]);
-	
+	UC_ReplyToCommand(client, "X, Y, Z = %.3f, %.3f, %3f", Origin[0], Origin[1], Origin[2]);
 	return Plugin_Handled;
 }
 
@@ -4657,10 +4909,8 @@ public Action Command_AdminCookies(int client, int args)
 				case CookieAccess_Protected: AccessName = "Protected Cookie";
 				case CookieAccess_Private: AccessName = "Hidden Cookie";
 			}
-			if (access < CookieAccess_Private)
-			{
-				PrintToConsole(client, "%s - %s - %s", name, description, AccessName);
-			}
+			
+			PrintToConsole(client, "%s - %s - %s", name, description, AccessName);
 		}
 		
 		delete iter;		
@@ -5325,7 +5575,6 @@ stock bool UC_GetAimPositionBySize(int client, int target, float outputOrigin[3]
 	
 }
 
-
 stock bool UC_CreateGlow(int client, int Color[3])
 {
 	ClientGlow[client] = 0;
@@ -5546,13 +5795,19 @@ public bool TraceRayDontHitPlayers(int entityhit, int mask)
     return (entityhit>MaxClients || entityhit == 0);
 }
 
-stock void UC_UnlethalSlap(int client, int damage = 0, bool sound = true)
+stock bool UC_UnlethalSlap(int client, int damage = 0, bool sound = true)
 {
+	bool OneHP = false;
 	int Health = GetEntityHealth(client);
 	if(damage >= Health)
+	{
 		damage = Health - 1;
+		OneHP = true;
+	}
 		
 	SlapPlayer(client, damage, sound);
+	
+	return OneHP;
 }
 
 stock void UC_GivePlayerAmmo(int client, int weapon, int ammo)
@@ -6108,114 +6363,6 @@ stock bool isCSGO()
 {
 	return GameName == Engine_CSGO;
 }
-
-
-// Emit sound any.
-
-stock EmitSoundToAllAny(const char[] sample, 
-                 entity = SOUND_FROM_PLAYER, 
-                 channel = SNDCHAN_AUTO, 
-                 level = SNDLEVEL_NORMAL, 
-                 flags = SND_NOFLAGS, 
-                 float volume = SNDVOL_NORMAL, 
-                 pitch = SNDPITCH_NORMAL, 
-                 speakerentity = -1, 
-                 const float origin[3] = NULL_VECTOR, 
-                 const float dir[3] = NULL_VECTOR, 
-                 bool updatePos = true, 
-                 float soundtime = 0.0)
-{
-	int[] clients = new int[MaxClients+1];
-	int total = 0;
-	
-	for (int i=1; i<=MaxClients; i++)
-	{
-		if (IsClientInGame(i))
-		{
-			clients[total++] = i;
-		}
-	}
-	
-	if (!total)
-	{
-		return;
-	}
-	
-	EmitSoundAny(clients, total, sample, entity, channel, 
-	level, flags, volume, pitch, speakerentity,
-	origin, dir, updatePos, soundtime);
-}
-
-stock bool PrecacheSoundAny(const char[] szPath, bool preload = false)
-{
-	EmitSoundCheckEngineVersion();
-	
-	if (g_bNeedsFakePrecache)
-	{
-		return FakePrecacheSoundEx(szPath);
-	}
-	else
-	{
-		return PrecacheSound(szPath, preload);
-	}
-}
-
-stock static EmitSoundCheckEngineVersion()
-{
-	if (g_bCheckedEngine)
-	{
-		return;
-	}
-
-	EngineVersion engVersion = GetEngineVersion();
-	
-	if (engVersion == Engine_CSGO || engVersion == Engine_DOTA)
-	{
-		g_bNeedsFakePrecache = true;
-	}
-	g_bCheckedEngine = true;
-}
-
-stock static bool FakePrecacheSoundEx(const char[] szPath)
-{
-	char szPathStar[PLATFORM_MAX_PATH];
-	Format(szPathStar, sizeof(szPathStar), "*%s", szPath);
-	
-	AddToStringTable( FindStringTable( "soundprecache" ), szPathStar );
-	return true;
-}
-
-stock EmitSoundAny(const clients[], 
-                 numClients, 
-                 char[] sample, 
-                 entity = SOUND_FROM_PLAYER, 
-                 channel = SNDCHAN_AUTO, 
-                 level = SNDLEVEL_NORMAL, 
-                 flags = SND_NOFLAGS, 
-                 float volume = SNDVOL_NORMAL, 
-                 pitch = SNDPITCH_NORMAL, 
-                 speakerentity = -1, 
-                 const float origin[3] = NULL_VECTOR, 
-                 const float dir[3] = NULL_VECTOR, 
-                 bool updatePos = true, 
-                 float soundtime = 0.0)
-{
-	EmitSoundCheckEngineVersion();
-
-	char szSound[PLATFORM_MAX_PATH];
-	
-	if (g_bNeedsFakePrecache)
-	{
-		Format(szSound, sizeof(szSound), "*%s", sample);
-	}
-	else
-	{
-		strcopy(szSound, sizeof(szSound), sample);
-	}
-	
-	EmitSound(clients, numClients, szSound, entity, channel, level, flags, volume, pitch, speakerentity, origin, dir, updatePos, soundtime);	
-}
-
 
 stock bool GetStringVector(const char[] str, float Vector[3]) // https://github.com/AllenCodess/Sourcemod-Resources/blob/master/sourcemod-misc.inc
 {
