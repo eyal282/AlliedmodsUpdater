@@ -2,10 +2,11 @@
 {
 	"Version"
 	{
-		"Latest"	"4.4"
+		"Latest"	"4.5"
 	}
 	
-	"Notes"	"Plugin is now transitioned to new syntax, and is compiled in sourcemod 1.11. !markofdeath <target> 1/0 will marka target to certain death, causing it to drown on land. !ertest is a new command that will apply a self mute on all players but the target, to test who is doing ear rape when several players are talking."
+	"Notes"	"New commands! !hp acts exactly like !heal, !bring acts exactly like !blink"
+	"Notes" "New command !goto will teleport you to your target"
 }
 	
 "Files"
