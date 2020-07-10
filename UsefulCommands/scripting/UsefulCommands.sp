@@ -20,7 +20,7 @@
 
 #pragma newdecls required
 
-char PLUGIN_VERSION[] = "4.6";
+char PLUGIN_VERSION[] = "4.7";
 
 public Plugin myinfo = 
 {
@@ -2901,41 +2901,55 @@ public Action Command_Heal(int client, int args)
 	
 	char ActivityBuffer[256];
 	
-	if(helmet > 2) // The helmet will never be a negative.
+	if(StrEqual(arg4, "max"))
+		helmet = 1
+		
+	else if(helmet > 1) // The helmet will never be a negative.
 		helmet = -1;
 
 	bool bHelmet = view_as<bool>(helmet);
+	
 	for(int i=0;i < target_count;i++)
 	{
 		int target = target_list[i];
 		
 		if(StrEqual(arg2, "max"))
 			health = GetEntProp(target, Prop_Data, "m_iMaxHealth");
-		
-		Format(ActivityBuffer, sizeof(ActivityBuffer), "%t", "Heal Admin Set", target);
-		
+			
 		if(health != -1)
 		{
 			SetEntityHealth(target, health);
-			Format(ActivityBuffer, sizeof(ActivityBuffer), "%s%t", ActivityBuffer, "Heal Admin Set Health", health);
 		}
 		if(armor != -1)
 		{
 			SetClientArmor(target, armor);
-			Format(ActivityBuffer, sizeof(ActivityBuffer), "%s%t", ActivityBuffer, "Heal Admin Set Armor", armor);
 		}
 		if(helmet != -1)
 		{
 			SetClientHelmet(target, bHelmet);
-			
-			Format(ActivityBuffer, sizeof(ActivityBuffer), "%s%t", ActivityBuffer, "Heal Admin Set Helmet", helmet);
-		}
-		
-		int length = strlen(ActivityBuffer);
-		ActivityBuffer[length-2] = '.';
-		ActivityBuffer[length-1] = EOS;
-		UC_ShowActivity2(client, UCTag, ActivityBuffer); 
+		}	
 	}
+	
+	Format(ActivityBuffer, sizeof(ActivityBuffer), "%t", "Heal Admin Set", target_name);
+	
+	if(health != -1)
+	{
+		Format(ActivityBuffer, sizeof(ActivityBuffer), "%s%t", ActivityBuffer, "Heal Admin Set Health", health);
+	}
+	if(armor != -1)
+	{
+		Format(ActivityBuffer, sizeof(ActivityBuffer), "%s%t", ActivityBuffer, "Heal Admin Set Armor", armor);
+	}
+	if(helmet != -1)
+	{
+		Format(ActivityBuffer, sizeof(ActivityBuffer), "%s%t", ActivityBuffer, "Heal Admin Set Helmet", helmet);
+	}
+	
+	int length = strlen(ActivityBuffer);
+	ActivityBuffer[length-2] = '.';
+	ActivityBuffer[length-1] = EOS;
+	UC_ShowActivity2(client, UCTag, ActivityBuffer); 
+	
 	return Plugin_Handled;
 }
 
