@@ -14,7 +14,7 @@ new EngineVersion:GameName;
 
 #define PREFIX "\x09[\x04Insta-Defuse\x09]\x01 "
 
-new const String:PLUGIN_VERSION[] = "1.5";
+new const String:PLUGIN_VERSION[] = "1.6";
 
 new Handle:hcv_NoobMargin = INVALID_HANDLE;
 new Handle:hcv_PrefDefault = INVALID_HANDLE;
@@ -28,6 +28,8 @@ new Handle:fw_OnInstantDefusePost = INVALID_HANDLE;
 new Handle:hCookie_Enable = INVALID_HANDLE;
 
 new Handle:hTimer_MolotovThreatEnd = INVALID_HANDLE;
+
+new ForcePressE[MAXPLAYERS+1];
 
 public Plugin:myinfo = 
 {
@@ -188,10 +190,10 @@ public Event_BombBeginDefusePlusFrame(UserId)
 
 stock AttemptInstantDefuse(client, exemptNade = 0)
 {
-	if(!GetEntProp(client, Prop_Send, "m_bIsDefusing"))
-		return;
+	//if(!GetEntProp(client, Prop_Send, "m_bIsDefusing"))
+		//return;
 		
-	else if(!IsClientInstantDefusePref(client))
+	if(!IsClientInstantDefusePref(client))
 		return;
 		
 	new StartEnt = MaxClients + 1;
@@ -243,6 +245,32 @@ stock AttemptInstantDefuse(client, exemptNade = 0)
 	if(ReturnValue != Plugin_Continue && ReturnValue != Plugin_Changed)
 		return;
 
+	SetEntProp(client, Prop_Send, "m_bIsDefusing", true);
+	SetEntPropEnt(c4, Prop_Send, "m_hBombDefuser", client);
+	SetEntPropFloat(c4, Prop_Send, "m_flDefuseCountDown", 0.0);
+	SetEntPropFloat(c4, Prop_Send, "m_flDefuseLength", 0.0);
+	SetEntProp(client, Prop_Send, "m_iProgressBarDuration", 0);
+	
+	ForcePressE[client] = 10;
+	RequestFrame(Frame_InstantDefuseAgain, GetClientUserId(client));
+}
+
+public Frame_InstantDefuseAgain(UserId)
+{
+	new client = GetClientOfUserId(UserId);
+	
+	if(client == 0)
+		return;
+	
+	new StartEnt = MaxClients + 1;
+	
+	new c4 = FindEntityByClassname(StartEnt, "planted_c4");
+	
+	if(c4 == -1)
+		return;
+		
+	SetEntProp(client, Prop_Send, "m_bIsDefusing", true);
+	SetEntPropEnt(c4, Prop_Send, "m_hBombDefuser", client);
 	SetEntPropFloat(c4, Prop_Send, "m_flDefuseCountDown", 0.0);
 	SetEntPropFloat(c4, Prop_Send, "m_flDefuseLength", 0.0);
 	SetEntProp(client, Prop_Send, "m_iProgressBarDuration", 0);
@@ -252,7 +280,18 @@ stock AttemptInstantDefuse(client, exemptNade = 0)
 	Call_PushCell(client);
 	Call_PushCell(c4);
 	
-	Call_Finish(ReturnValue);
+	Call_Finish();
+}
+
+
+public Action:OnPlayerRunCmd(client, &buttons)
+{
+	// Guarantees defuse if player instantly lets go of E button.
+	if(ForcePressE[client] > 0)
+	{
+		buttons |= IN_USE;
+		ForcePressE[client]--;
+	}
 }
 
 public Action:Event_AttemptInstantDefuse(Handle:hEvent, const String:Name[], bool:dontBroadcast)
