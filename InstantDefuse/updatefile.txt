@@ -2,7 +2,7 @@
 {
 	"Version"
 	{
-		"Latest"	"1.6"
+		"Latest"	"1.7"
 	}
 	
 	"Notes" "Briefly pressing E over long pressing still allows the defuse to work - ALWAYS LONG PRESS JUST IN CASE!!!"
