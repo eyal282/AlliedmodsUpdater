@@ -2,13 +2,14 @@
 {
 	"Version"
 	{
-		"Latest"	"1.5"
+		"Latest"	"1.6"
 	}
 	
-	"Notes" "If the noob margin cvar is set to 0 ( retake behaviour mostly ) it will now announce in red that it's too late rather than defuse being uncertain"
+	"Notes" "Briefly pressing E over long pressing still allows the defuse to work - ALWAYS LONG PRESS JUST IN CASE!!!"
 }
 	
 "Files"
 {
 	"Plugin"	"Path_SM/plugins/InstantDefuse.smx"
+	"Source"	"Path_SM/scripting/InstantDefuse.sp"
 }
