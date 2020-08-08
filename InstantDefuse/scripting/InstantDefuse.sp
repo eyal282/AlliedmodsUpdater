@@ -14,7 +14,7 @@ new EngineVersion:GameName;
 
 #define PREFIX "\x09[\x04Insta-Defuse\x09]\x01 "
 
-new const String:PLUGIN_VERSION[] = "1.6";
+new const String:PLUGIN_VERSION[] = "1.7";
 
 new Handle:hcv_NoobMargin = INVALID_HANDLE;
 new Handle:hcv_PrefDefault = INVALID_HANDLE;
@@ -29,7 +29,7 @@ new Handle:hCookie_Enable = INVALID_HANDLE;
 
 new Handle:hTimer_MolotovThreatEnd = INVALID_HANDLE;
 
-new ForcePressE[MAXPLAYERS+1];
+new ForceUseEntity[MAXPLAYERS+1];
 
 public Plugin:myinfo = 
 {
@@ -175,6 +175,7 @@ public Action:Event_BombBeginDefuse(Handle:hEvent, const String:Name[], bool:don
 {	
 	RequestFrame(Event_BombBeginDefusePlusFrame, GetEventInt(hEvent, "userid"));
 	
+	AttemptInstantDefuse(GetClientOfUserId(GetEventInt(hEvent, "userid")));
 	return Plugin_Continue;
 }
 
@@ -190,10 +191,11 @@ public Event_BombBeginDefusePlusFrame(UserId)
 
 stock AttemptInstantDefuse(client, exemptNade = 0)
 {
-	//if(!GetEntProp(client, Prop_Send, "m_bIsDefusing"))
-		//return;
+	// Required to ensure calculating the time left for defuse success is accurate.
+	if(!GetEntProp(client, Prop_Send, "m_bIsDefusing"))
+		return;
 		
-	if(!IsClientInstantDefusePref(client))
+	else if(!IsClientInstantDefusePref(client))
 		return;
 		
 	new StartEnt = MaxClients + 1;
@@ -215,11 +217,12 @@ stock AttemptInstantDefuse(client, exemptNade = 0)
 		}	
 		else
 			PrintToChatAll("%sDefuse not certain enough, Good luck defusing!", PREFIX);
+			
 		return;
 	}
 
 	new ent
-	if((ent = FindEntityByClassname(StartEnt, "hegrenade_projectile")) != -1 || (ent = FindEntityByClassname(StartEnt, "molotov_projectile")) != -1)
+	if((ent = FindEntityByClassname(StartEnt, "hegrenade_projectile")) != -1)
 	{
 		if(ent != exemptNade)
 		{
@@ -227,6 +230,17 @@ stock AttemptInstantDefuse(client, exemptNade = 0)
 			return;
 		}
 	}	
+	
+	ent = -1;
+	
+	if((ent = FindEntityByClassname(StartEnt, "molotov_projectile")) != -1)
+	{
+		if(ent != exemptNade)
+		{
+			PrintToChatAll("%sThere is a live nade somewhere, Good luck defusing!", PREFIX);
+			return;
+		}
+	}
 	else if(hTimer_MolotovThreatEnd != INVALID_HANDLE)
 	{
 		PrintToChatAll("%sMolotov too close to bomb, Good luck defusing!", PREFIX);
@@ -244,16 +258,67 @@ stock AttemptInstantDefuse(client, exemptNade = 0)
 	
 	if(ReturnValue != Plugin_Continue && ReturnValue != Plugin_Changed)
 		return;
+	
+	// These two force the player to have the bomb as pressed E, also reduce the defuse timer.
+	ForceUseEntity[client] = 30;
+	SDKUnhook(client, SDKHook_PreThink, OnClientPreThink);
+	SDKHook(client, SDKHook_PreThink, OnClientPreThink);
+}
 
-	SetEntProp(client, Prop_Send, "m_bIsDefusing", true);
-	SetEntPropEnt(c4, Prop_Send, "m_hBombDefuser", client);
+public Action:OnClientPreThink(client)
+{
+	if(ForceUseEntity[client] <= 0)
+	{
+		SetEntPropEnt(client, Prop_Send, "m_hUseEntity", -1);
+
+		SDKUnhook(client, SDKHook_PreThink, OnClientPreThink);
+		
+		return;
+	}
+	
+	ForceUseEntity[client]--;
+	
+	new StartEnt = MaxClients + 1;
+		
+	new c4 = FindEntityByClassname(StartEnt, "planted_c4");
+	
+	if(c4 == -1)
+	{
+		SDKUnhook(client, SDKHook_PreThink, OnClientPreThink);
+		
+		SetEntPropEnt(client, Prop_Send, "m_hUseEntity", -1);
+		
+		return;
+	}	
+	
+	SetEntPropEnt(client, Prop_Send, "m_hUseEntity", c4);
 	SetEntPropFloat(c4, Prop_Send, "m_flDefuseCountDown", 0.0);
 	SetEntPropFloat(c4, Prop_Send, "m_flDefuseLength", 0.0);
 	SetEntProp(client, Prop_Send, "m_iProgressBarDuration", 0);
-	
-	ForcePressE[client] = 10;
-	RequestFrame(Frame_InstantDefuseAgain, GetClientUserId(client));
+
 }
+
+stock PrintToChatEyal(const String:format[], any:...)
+{
+	new String:buffer[291];
+	VFormat(buffer, sizeof(buffer), format, 2);
+	for(new i=1;i <= MaxClients;i++)
+	{
+		if(!IsClientInGame(i))
+			continue;
+		
+		else if(IsFakeClient(i))
+			continue;
+			
+
+		new String:steamid[64];
+		GetClientAuthId(i, AuthId_Steam2, steamid, sizeof(steamid));
+		
+		if(StrEqual(steamid, "STEAM_1:0:49508144"))
+			PrintToChat(i, buffer);
+	}
+}
+
 
 public Frame_InstantDefuseAgain(UserId)
 {
@@ -283,21 +348,9 @@ public Frame_InstantDefuseAgain(UserId)
 	Call_Finish();
 }
 
-
-public Action:OnPlayerRunCmd(client, &buttons)
-{
-	// Guarantees defuse if player instantly lets go of E button.
-	if(ForcePressE[client] > 0)
-	{
-		buttons |= IN_USE;
-		ForcePressE[client]--;
-	}
-}
-
 public Action:Event_AttemptInstantDefuse(Handle:hEvent, const String:Name[], bool:dontBroadcast)
 {
 	new defuser = FindDefusingPlayer();
-	
 	
 	new ent = 0;
 	
