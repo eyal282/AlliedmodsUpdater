@@ -60,6 +60,11 @@
 		"#format"	"{1:s}"
 		"en" "Usage: {1} <#userid|name> <CT/T/Spec>"
 	}
+	"Command Usage Swap"
+	{
+		"#format"	"{1:s}"
+		"en" "Usage: {1} <#userid|name>"
+	}
 	"Command Usage Spec"
 	{
 		"#format"	"{1:s}"
@@ -95,16 +100,6 @@
 	{
 		"#format"	"{1:s}"
 		"en" "unburied {1}."
-	}
-	"Player Marked"
-	{
-		"#format"	"{1:s}"
-		"en" "put mark of death on {1}."
-	}
-	"Player Unmarked"
-	{
-		"#format"	"{1:s}"
-		"en" "removed mark of death on {1}."
 	}
 	"Player Already Uberslapped"
 	{
@@ -315,6 +310,11 @@
 	{
 		"#format"	"{1:s},{2:s}"
 		"en" "set \"{1}\"s team to {2}."
+	}
+	"Player Swap Team"
+	{
+		"#format"	"{1:s}"
+		"en" "swapped \"{1}\" to the opposite team."
 	}
 	"Command UCEdit Enabled"
 	{
