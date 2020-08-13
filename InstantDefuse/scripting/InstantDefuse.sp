@@ -14,10 +14,11 @@ new EngineVersion:GameName;
 
 #define PREFIX "\x09[\x04Insta-Defuse\x09]\x01 "
 
-new const String:PLUGIN_VERSION[] = "1.7";
+new const String:PLUGIN_VERSION[] = "1.8";
 
 new Handle:hcv_NoobMargin = INVALID_HANDLE;
 new Handle:hcv_PrefDefault = INVALID_HANDLE;
+new Handle:hcv_AutoExplode = INVALID_HANDLE;
 
 new Handle:hcv_InfernoDuration = INVALID_HANDLE;
 new Handle:hcv_InfernoDistance = INVALID_HANDLE;
@@ -26,6 +27,8 @@ new Handle:fw_OnInstantDefusePre = INVALID_HANDLE;
 new Handle:fw_OnInstantDefusePost = INVALID_HANDLE;
 
 new Handle:hCookie_Enable = INVALID_HANDLE;
+
+new Float:LastDefuseTimeLeft;
 
 new Handle:hTimer_MolotovThreatEnd = INVALID_HANDLE;
 
@@ -51,6 +54,7 @@ public OnPluginStart()
 	#endif
 	
 	HookEvent("bomb_begindefuse", Event_BombBeginDefuse, EventHookMode_Post);
+	HookEvent("bomb_defused", Event_BombDefused, EventHookMode_Post);
 	
 	if(isCSGO())
 		HookEvent("molotov_detonate", Event_MolotovDetonate);
@@ -63,6 +67,7 @@ public OnPluginStart()
 	SetConVarString(CreateConVar("instant_defuse_version", PLUGIN_VERSION), PLUGIN_VERSION);
 	
 	hcv_NoobMargin = UC_CreateConVar("instant_defuse_noob_margin", "5.2", "To prevent noobs from instantly running for their lives when instant defuse fails, instant defuse won't activate if defuse may be uncertain to the player", FCVAR_NOTIFY);
+	hcv_AutoExplode = UC_CreateConVar("instant_defuse_auto_explode", "0", "Set to 1 to make defuses with no chance to happen explode the bomb instantly. Noob margin must be set to 0.0", FCVAR_NOTIFY);
 	hcv_PrefDefault = UC_CreateConVar("instant_defuse_pref_default", "1", "If 1, new players will have instant defuse preference enabled by default");
 	
 	if(isCSGO())
@@ -171,6 +176,17 @@ public Action:Event_RoundStart(Handle:hEvent, const String:Name[], bool:dontBroa
 	}
 }
 
+public Action:Event_BombDefused(Handle:hEvent, const String:Name[], bool:dontBroadcast)
+{
+	new client = GetClientOfUserId(GetEventInt(hEvent, "userid"));
+	
+	if(client == 0)
+		return;
+		
+	if(LastDefuseTimeLeft != -1.0)
+		PrintToChatAll("%s%N\x02 insta-defused the bomb with\x09 %.3f seconds\x01 left.", PREFIX, client, -1.0 * LastDefuseTimeLeft);
+}
+
 public Action:Event_BombBeginDefuse(Handle:hEvent, const String:Name[], bool:dontBroadcast)
 {	
 	RequestFrame(Event_BombBeginDefusePlusFrame, GetEventInt(hEvent, "userid"));
@@ -191,6 +207,8 @@ public Event_BombBeginDefusePlusFrame(UserId)
 
 stock AttemptInstantDefuse(client, exemptNade = 0)
 {
+ 	LastDefuseTimeLeft = -1.0;
+	
 	// Required to ensure calculating the time left for defuse success is accurate.
 	if(!GetEntProp(client, Prop_Send, "m_bIsDefusing"))
 		return;
@@ -208,16 +226,27 @@ stock AttemptInstantDefuse(client, exemptNade = 0)
 	else if(FindAlivePlayer(CS_TEAM_T) != 0)
 		return;
 	
-	else if(GetEntPropFloat(c4, Prop_Send, "m_flC4Blow") - GetConVarFloat(hcv_NoobMargin) < GetEntPropFloat(c4, Prop_Send, "m_flDefuseCountDown"))
+	LastDefuseTimeLeft = GetEntPropFloat(c4, Prop_Send, "m_flDefuseCountDown") - GetEntPropFloat(c4, Prop_Send, "m_flC4Blow");
+	
+	if(GetEntPropFloat(c4, Prop_Send, "m_flC4Blow") - GetConVarFloat(hcv_NoobMargin) < GetEntPropFloat(c4, Prop_Send, "m_flDefuseCountDown"))
 	{
 		if(GetConVarFloat(hcv_NoobMargin) == 0.0)
 		{
-			PrintToChatAll("%sTOO LATE!!! RUNNNNNNNNNNNN!!!", PREFIX);
-			PrintHintTextToAll("<font color=\"#FF0000\">TOO LATE!!!\nRUNNNNNNNNNNNN!!!</font>");
+			switch(GetConVarBool(hcv_AutoExplode))
+			{
+				case true:	SetEntPropFloat(c4, Prop_Send, "m_flC4Blow", 0.0);
+				case false:
+				{
+					PrintToChatAll("%sTOO LATE!!! RUNNNNNNNNN!!!", PREFIX);
+					PrintHintTextToAll("<font color=\"#FF0000\">TOO LATE!!!\nRUNNNNNNNNN!!!</font>\nYou were %.3f seconds late.", LastDefuseTimeLeft);
+				}
+			}
 		}	
 		else
 			PrintToChatAll("%sDefuse not certain enough, Good luck defusing!", PREFIX);
-			
+		
+		LastDefuseTimeLeft = -1.0;
+		
 		return;
 	}
 
@@ -227,6 +256,9 @@ stock AttemptInstantDefuse(client, exemptNade = 0)
 		if(ent != exemptNade)
 		{
 			PrintToChatAll("%sThere is a live nade somewhere, Good luck defusing!", PREFIX);
+			
+			LastDefuseTimeLeft = -1.0;
+			
 			return;
 		}
 	}	
@@ -238,12 +270,18 @@ stock AttemptInstantDefuse(client, exemptNade = 0)
 		if(ent != exemptNade)
 		{
 			PrintToChatAll("%sThere is a live nade somewhere, Good luck defusing!", PREFIX);
+			
+			LastDefuseTimeLeft = -1.0;
+			
 			return;
 		}
 	}
 	else if(hTimer_MolotovThreatEnd != INVALID_HANDLE)
 	{
 		PrintToChatAll("%sMolotov too close to bomb, Good luck defusing!", PREFIX);
+		
+		LastDefuseTimeLeft = -1.0;
+		
 		return;
 	}
 	
@@ -257,8 +295,11 @@ stock AttemptInstantDefuse(client, exemptNade = 0)
 	Call_Finish(ReturnValue);
 	
 	if(ReturnValue != Plugin_Continue && ReturnValue != Plugin_Changed)
+	{
+		LastDefuseTimeLeft = -1.0;
+		
 		return;
-	
+	}
 	// These two force the player to have the bomb as pressed E, also reduce the defuse timer.
 	ForceUseEntity[client] = 30;
 	SDKUnhook(client, SDKHook_PreThink, OnClientPreThink);
