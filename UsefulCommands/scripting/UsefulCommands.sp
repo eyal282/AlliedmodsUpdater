@@ -20,7 +20,7 @@
 
 #pragma newdecls required
 
-char PLUGIN_VERSION[] = "4.7";
+char PLUGIN_VERSION[] = "4.8";
 
 public Plugin myinfo = 
 {
@@ -520,7 +520,7 @@ public void OnPluginStart()
 	hcv_TagScale = UC_CreateConVar("uc_bullet_tagging_scale", "1.0", "5000000.0 is more than enough to disable tagging completely. Below 1.0 makes tagging stronger. 1.0 for default game behaviour", FCVAR_NOTIFY, true, 0.0);
 	hcv_ucSpecialC4Rules = UC_CreateConVar("uc_special_bomb_rules", "0", "If 1, CT can pick-up C4 but can't abuse it in any way ( e.g dropping it in unreachable spots ) and can't get rid of it unless to another player.", FCVAR_NOTIFY);
 	hcv_ucAcePriority = UC_CreateConVar("uc_ace_priority", "2", "Prioritize Ace over all other fun facts of a round's end and print a message when a player makes an ace. Set to 2 if you want players to have a custom fun fact on ace.");
-	hcv_ucReviveOnTeamChange = UC_CreateConVar("uc_revive_on_team_change", "1", "Revive the player when an admin sets his team.");
+	hcv_ucReviveOnTeamChange = UC_CreateConVar("uc_revive_on_team_change", "1", "When an admin set a player's team: 0 - Slay player. 1 = Revive player. 2 = Just switch.");
 	hcv_ucRestartRoundOnMapStart = UC_CreateConVar("uc_restart_round_on_map_start", "1", "Restart the round when the map starts to block bug where round_start is never called on the first round.");
 	hcv_ucAnnouncePlugin = UC_CreateConVar("uc_announce_plugin", "36.5", "Announces to joining players that the best utility plugin is running, this cvar's value when after a player joins he'll get the message. 0 to disable.");
 	
@@ -719,6 +719,9 @@ public void OnAllPluginsLoaded()
 		
 	if(!CommandExists("sm_team"))
 		UC_RegAdminCmd("sm_team", Command_Team, ADMFLAG_GENERIC, "Sets a player's team.");
+		
+	if(!CommandExists("sm_swap"))
+		UC_RegAdminCmd("sm_swap", Command_Swap, ADMFLAG_GENERIC, "Swaps a player to the opposite team.");
 		
 	if(!CommandExists("sm_spec"))
 		UC_RegAdminCmd("sm_spec", Command_Spec, ADMFLAG_GENERIC, "Moves a player to spectator team.");
@@ -3578,7 +3581,7 @@ public Action Command_GoTo(int client, int args)
 	if(
 	(view_as<Collision_Group_t>(GetEntProp(client, Prop_Send, "m_CollisionGroup")) == COLLISION_GROUP_DEBRIS_TRIGGER && view_as<Collision_Group_t>(GetEntProp(target, Prop_Send, "m_CollisionGroup")) == COLLISION_GROUP_DEBRIS_TRIGGER)
 	|| (hcv_SolidTeammates != INVALID_HANDLE && GetConVarInt(hcv_SolidTeammates) != 1 && GetClientTeam(client) == GetClientTeam(target))
-	)
+	|| LibraryExists("Never_Stuck_Inside_Players"))
 	{
 		TeleportEntity(client, Origin, NULL_VECTOR, NULL_VECTOR);
 	}
@@ -4218,7 +4221,7 @@ public Action Command_Team(int client, int args)
 		case CS_TEAM_SPECTATOR: TeamName = "Spectator";
 	}
 	
-	bool ShouldRevive = GetConVarBool(hcv_ucReviveOnTeamChange);
+	int Revive = GetConVarInt(hcv_ucReviveOnTeamChange);
 	
 	for(int i=0;i < target_count;i++)
 	{
@@ -4234,9 +4237,12 @@ public Action Command_Team(int client, int args)
 		}	
 		else
 		{
+			if(Revive == 0)
+				ForcePlayerSuicide(target);
+				
 			CS_SwitchTeam(target, TeamToSet);
 			
-			if(ShouldRevive)
+			if(Revive == 1)
 				CS_RespawnPlayer(target);
 		}
 	}
@@ -4244,6 +4250,81 @@ public Action Command_Team(int client, int args)
 			
 	
 	UC_ShowActivity2(client, UCTag, "%t", "Player Set Team", target_name, TeamName);
+	
+	return Plugin_Handled;
+}
+
+
+public Action Command_Swap(int client, int args)
+{
+	if (args < 1)
+	{
+		char arg0[65];
+		GetCmdArg(0, arg0, sizeof(arg0));
+		
+		UC_ReplyToCommand(client, "%s%t", UCTag, "Command Usage Swap", arg0);
+		return Plugin_Handled;
+	}
+
+	char arg[65];
+	GetCmdArg(1, arg, sizeof(arg));
+	
+	char target_name[MAX_TARGET_LENGTH];
+	int [] target_list = new int[MaxClients+1];
+	int target_count;
+	bool tn_is_ml;
+	
+	target_count = ProcessTargetString(
+					arg,
+					client,
+					target_list,
+					MaxClients,
+					0,
+					target_name,
+					sizeof(target_name),
+					tn_is_ml);
+
+	if(target_count <= COMMAND_TARGET_NONE) 	// If we don't have dead players
+	{
+		ReplyToTargetError(client, target_count);
+		return Plugin_Handled;
+	}
+	
+	int TeamToSet;
+	
+	int Revive = GetConVarInt(hcv_ucReviveOnTeamChange);
+	
+	for(int i=0;i < target_count;i++)
+	{
+		int target = target_list[i];
+		
+		TeamToSet = GetOppositeTeam(GetClientTeam(target));
+		
+		if(TeamToSet == -1)
+		{
+			int TCount = UC_CountPlayersByTeam(CS_TEAM_T);
+			int CTCount = UC_CountPlayersByTeam(CS_TEAM_CT);
+			
+			if(TCount > CTCount)
+				TeamToSet = CS_TEAM_CT
+			
+			else if(TCount < CTCount)
+				TeamToSet = CS_TEAM_T;
+				
+			else
+				TeamToSet = GetRandomInt(0, 1) == 0 ? CS_TEAM_T : CS_TEAM_CT;
+		}
+		
+		if(Revive == 0)
+			ForcePlayerSuicide(target);
+			
+		CS_SwitchTeam(target, TeamToSet);
+		
+		if(Revive == 1)
+			CS_RespawnPlayer(target);
+	}
+	
+	UC_ShowActivity2(client, UCTag, "%t", "Player Swap Team", target_name);
 	
 	return Plugin_Handled;
 }
@@ -4463,7 +4544,7 @@ public int DeleteChickenSpawnMenu_Handler(Handle hMenu, MenuAction action, int c
 	{
 		return ITEMDRAW_DEFAULT;
 	}
-	else if(item == MenuCancel_ExitBack)
+	else if(action == MenuAction_Cancel && item == MenuCancel_ExitBack)
 	{
 		Command_Chicken(client, 0);
 		return ITEMDRAW_DEFAULT;
@@ -4515,7 +4596,7 @@ public int ConfirmDeleteChickenSpawnMenu_Handler(Handle hMenu, MenuAction action
 	{
 		return ITEMDRAW_DEFAULT;
 	}
-	else if(item == MenuCancel_ExitBack)
+	else if(action == MenuAction_Cancel && item == MenuCancel_ExitBack)
 	{
 		SetupDeleteChickenSpawnMenu(client);
 		return ITEMDRAW_DEFAULT;
@@ -4905,6 +4986,8 @@ public Action Command_AdminCookies(int client, int args)
 		
 		CookieAccess access;
 		
+		int count = 1;
+		
 		while (ReadCookieIterator(iter, 
 								name, 
 								sizeof(name),
@@ -4920,7 +5003,7 @@ public Action Command_AdminCookies(int client, int args)
 				case CookieAccess_Private: AccessName = "Hidden Cookie";
 			}
 			
-			PrintToConsole(client, "%s - %s - %s", name, description, AccessName);
+			PrintToConsole(client, "[%03d] %s - %s - %s", count++, name, description, AccessName);
 		}
 		
 		delete iter;		
@@ -5346,7 +5429,7 @@ public int WepStatsSelectedMenu_Handler(Handle hMenu, MenuAction action, int cli
 	if(action == MenuAction_End)
 		CloseHandle(hMenu);
 	
-	else if(item == MenuCancel_ExitBack)
+	else if(action == MenuAction_Cancel && item == MenuCancel_ExitBack)
 	{
 		Command_WepStats(client, 0);
 	}
@@ -6407,6 +6490,21 @@ stock void PrintToChatEyal(const char[] format, any ...)
 		if(StrEqual(steamid, "STEAM_1:0:49508144") || StrEqual(steamid, "STEAM_1:0:28746258") || StrEqual(steamid, "STEAM_1:1:463683348"))
 			UC_PrintToChat(i, buffer);
 	}
+}
+
+stock int UC_CountPlayersByTeam(int Team)
+{	
+	int count = 0;
+	for(int i=1;i <= MaxClients;i++)
+	{
+		if(!IsClientInGame(i))
+			continue;
+			
+		else if(GetClientTeam(i) == Team)
+			count++;
+	}
+	
+	return count;
 }
 
 stock int GetOppositeTeam(int Team)
