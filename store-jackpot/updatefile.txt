@@ -1,0 +1,16 @@
+"Information"
+{
+	"Version"
+	{
+		"Latest"	"1.0"
+	}
+	
+	"Notes"	"Initial Release."
+}
+	
+"Files"
+{
+	"Plugin"	"Path_SM/plugins/store-jackpot.smx"
+	
+	"Source"	"Path_SM/scripting/store-jackpot.sp"
+}
