@@ -5,6 +5,8 @@
 native Store_GetClientCredits(client);
 native Store_SetClientCredits(client, credits);
 
+#define UPDATE_URL "https://raw.githubusercontent.com/eyal282/store-jackpot/updatefile.txt"
+
 #undef REQUIRE_PLUGIN
 #undef REQUIRE_EXTENSIONS
 #tryinclude <autoexecconfig>
@@ -71,6 +73,26 @@ public OnPluginStart()
 	AutoExecConfig_CleanFile();
 	
 	#endif
+	
+	#if defined _updater_included
+	if (LibraryExists("updater"))
+	{
+		Updater_AddPlugin(UPDATE_URL);
+	}
+	#endif
+}
+
+
+public OnLibraryAdded(const String:name[])
+{
+	
+	#if defined _updater_included
+	if (StrEqual(name, "updater"))
+	{
+		Updater_AddPlugin(UPDATE_URL);
+	}
+	#endif
+	
 }
 
 public OnClientPostAdminCheck(client)
@@ -333,4 +355,5 @@ stock ConVar:UC_CreateConVar(const String:name[], const String:defaultValue[], c
 }
  
 #endif
+
 
