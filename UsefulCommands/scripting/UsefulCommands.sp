@@ -20,7 +20,7 @@
 
 #pragma newdecls required
 
-char PLUGIN_VERSION[] = "4.8";
+#define PLUGIN_VERSION "4.9"
 
 public Plugin myinfo = 
 {
@@ -185,6 +185,8 @@ Handle Trie_CoinLevelValues = INVALID_HANDLE;
 Handle hcv_PartyMode = INVALID_HANDLE;
 Handle hcv_mpAnyoneCanPickupC4 = INVALID_HANDLE;
 Handle hcv_SolidTeammates = INVALID_HANDLE;
+Handle hcv_mpRespawnOnDeathT = INVALID_HANDLE;
+Handle hcv_mpRespawnOnDeathCT = INVALID_HANDLE;
 //new Handle:hcv_svCheats = INVALID_HANDLE;
 //new svCheatsFlags = 0;
 
@@ -511,7 +513,8 @@ public void OnPluginStart()
 	fw_ucWeaponStatsRetrievedPost = CreateGlobalForward("UsefulCommands_OnWeaponStatsRetrievedPost", ET_Ignore);
 
 	
-	//hcv_svCheats = FindConVar("sv_cheats");
+	hcv_mpRespawnOnDeathT = FindConVar("mp_respawn_on_death_t");
+	hcv_mpRespawnOnDeathCT = FindConVar("mp_respawn_on_death_ct");
 	
 	//svCheatsFlags = GetConVarFlags(hcv_svCheats);
 	
@@ -837,7 +840,7 @@ public void SQLCB_Error(Handle db, Handle hndl, const char[] sError, int data)
 void LoadChickenSpawns()
 {
 	char sQuery[256];
-	Format(sQuery, sizeof(sQuery), "SELECT * FROM UsefulCommands_Chickens WHERE ChickenMap = \"%s\"", MapName);
+	SQL_FormatQuery(dbLocal, sQuery, sizeof(sQuery), "SELECT * FROM UsefulCommands_Chickens WHERE ChickenMap = \"%s\"", MapName);
 	SQL_TQuery(dbLocal, SQLCB_LoadChickenSpawns, sQuery);
 }
 public void SQLCB_LoadChickenSpawns(Handle db, Handle hndl, const char[] sError, int data)
@@ -2322,10 +2325,10 @@ public void OnClientDisconnect(int client)
 		char Name[32], IPAddress[32], CurrentTime = GetTime();
 		GetClientName(client, Name, sizeof(Name));
 		GetClientIP(client, IPAddress, sizeof(IPAddress));
-		Format(sQuery, sizeof(sQuery), "INSERT OR IGNORE INTO UsefulCommands_LastPlayers (AuthId, IPAddress, Name, LastConnect) VALUES (\"%s\", \"%s\", \"%s\", %i)", AuthId, IPAddress, Name, CurrentTime);
+		SQL_FormatQuery(dbLocal, sQuery, sizeof(sQuery), "INSERT OR IGNORE INTO UsefulCommands_LastPlayers (AuthId, IPAddress, Name, LastConnect) VALUES (\"%s\", \"%s\", \"%s\", %i)", AuthId, IPAddress, Name, CurrentTime);
 		SQL_TQuery(dbLocal, SQLCB_Error, sQuery, DBPrio_High);
 		
-		Format(sQuery, sizeof(sQuery), "UPDATE UsefulCommands_LastPlayers SET IPAddress = \"%s\", Name = \"%s\", LastConnect = %i WHERE AuthId = \"%s\"", IPAddress, Name, CurrentTime, AuthId);
+		SQL_FormatQuery(dbLocal, sQuery, sizeof(sQuery), "UPDATE UsefulCommands_LastPlayers SET IPAddress = \"%s\", Name = \"%s\", LastConnect = %i WHERE AuthId = \"%s\"", IPAddress, Name, CurrentTime, AuthId);
 		SQL_TQuery(dbLocal, SQLCB_Error, sQuery, _, DBPrio_Normal);
 	}
 }
@@ -2535,7 +2538,12 @@ public Action Command_Revive(int client, int args)
 		int target = target_list[i];
 		
 		if(UC_IsValidTeam(target))
+		{
+			if( (GetConVarBool(hcv_mpRespawnOnDeathCT) && GetClientTeam(target) == CS_TEAM_CT) || (GetConVarBool(hcv_mpRespawnOnDeathT) && GetClientTeam(target) == CS_TEAM_T) )
+				continue;
+				
 			UC_RespawnPlayer(target);
+		}
 	}
 	
 	UC_ShowActivity2(client, UCTag, "%t", "Player Respawned", target_name);
@@ -2584,6 +2592,9 @@ public Action Command_HardRevive(int client, int args)
 		
 		bool isAlive = IsPlayerAlive(target); // Was he alive before the 1up?
 		
+		if( isAlive || (GetConVarBool(hcv_mpRespawnOnDeathCT) && GetClientTeam(target) == CS_TEAM_CT) || (GetConVarBool(hcv_mpRespawnOnDeathT) && GetClientTeam(target) == CS_TEAM_T) )
+			continue;
+				
 		UC_RespawnPlayer(target);
 		
 		if(!UC_IsNullVector(DeathOrigin[target]) && !isAlive)
@@ -4485,7 +4496,7 @@ public int ChickenMenu_Handler(Handle hMenu, MenuAction action, int client, int 
 				char sQuery[256];
 				
 				UC_PrintToChat(client, TargetName);
-				Format(sQuery, sizeof(sQuery), "DELETE FROM UsefulCommands_Chickens WHERE ChickenOrigin = \"%s\" AND ChickenMap = \"%s\"", TargetName, MapName);
+				SQL_FormatQuery(dbLocal, sQuery, sizeof(sQuery), "DELETE FROM UsefulCommands_Chickens WHERE ChickenOrigin = \"%s\" AND ChickenMap = \"%s\"", TargetName, MapName);
 				SQL_TQuery(dbLocal, SQLCB_Error, sQuery);
 				
 				int Pos = FindStringInArray(ChickenOriginArray, TargetName);
@@ -4502,7 +4513,7 @@ public int ChickenMenu_Handler(Handle hMenu, MenuAction action, int client, int 
 void SetupDeleteChickenSpawnMenu(int client)
 {
 	char sQuery[256];
-	Format(sQuery, sizeof(sQuery), "SELECT * FROM UsefulCommands_Chickens WHERE ChickenMap = \"%s\" ORDER BY ChickenCreateDate DESC", MapName);
+	SQL_FormatQuery(dbLocal, sQuery, sizeof(sQuery), "SELECT * FROM UsefulCommands_Chickens WHERE ChickenMap = \"%s\" ORDER BY ChickenCreateDate DESC", MapName);
 	SQL_TQuery(dbLocal, SQLCB_DeleteChickenSpawnMenu, sQuery, GetClientUserId(client));
 }
 public void SQLCB_DeleteChickenSpawnMenu(Handle db, Handle hndl, const char[] sError, int data)
@@ -4613,7 +4624,7 @@ public int ConfirmDeleteChickenSpawnMenu_Handler(Handle hMenu, MenuAction action
 			GetMenuItem(hMenu, item, sOrigin, sizeof(sOrigin), iIgnore, sIgnore, sizeof(sIgnore));
 			
 			char sQuery[256];
-			Format(sQuery, sizeof(sQuery), "DELETE FROM UsefulCommands_Chickens WHERE ChickenOrigin = \"%s\" AND ChickenMap = \"%s\"", sOrigin, MapName);
+			SQL_FormatQuery(dbLocal, sQuery, sizeof(sQuery), "DELETE FROM UsefulCommands_Chickens WHERE ChickenOrigin = \"%s\" AND ChickenMap = \"%s\"", sOrigin, MapName);
 			SQL_TQuery(dbLocal, SQLCB_ChickenSpawnDeleted, sQuery, GetClientUserId(client));
 		}
 		else
@@ -4648,7 +4659,7 @@ void CreateChickenSpawn(int client)
 	
 	Origin[2] += 15.0;
 	Format(sOrigin, sizeof(sOrigin), "%.4f %.4f %.4f", Origin[0], Origin[1], Origin[2]);
-	Format(sQuery, sizeof(sQuery), "INSERT OR IGNORE INTO UsefulCommands_Chickens (ChickenOrigin, ChickenMap, ChickenCreateDate) VALUES (\"%s\", \"%s\", %i)", sOrigin, MapName, GetTime());
+	SQL_FormatQuery(dbLocal, sQuery, sizeof(sQuery), "INSERT OR IGNORE INTO UsefulCommands_Chickens (ChickenOrigin, ChickenMap, ChickenCreateDate) VALUES (\"%s\", \"%s\", %i)", sOrigin, MapName, GetTime());
 	
 	Handle DP = CreateDataPack();
 	
@@ -4718,7 +4729,7 @@ public void QueryLastConnected(int client, int ItemPos, char[] AuthStr)
 	else
 	{
 		char sQuery[512];
-		Format(sQuery, sizeof(sQuery), "SELECT * FROM UsefulCommands_LastPlayers WHERE Name like %s OR AuthId like %s OR IPAddress like %s ORDER BY LastConnect DESC", AuthStr, AuthStr, AuthStr); 
+		SQL_FormatQuery(dbLocal, sQuery, sizeof(sQuery), "SELECT * FROM UsefulCommands_LastPlayers WHERE Name like %s OR AuthId like %s OR IPAddress like %s ORDER BY LastConnect DESC", AuthStr, AuthStr, AuthStr); 
 		
 		SQL_TQuery(dbLocal, SQLCB_LastConnected, sQuery, DP); 
 	}
@@ -5180,36 +5191,41 @@ public Action Command_FindCvar(int client, int args)
 		return Plugin_Handled;
 	}
 	
-	char CvarToSearch[128];
-	GetCmdArg(1, CvarToSearch, sizeof(CvarToSearch));
+	char CvarToSearch[256]; // You can also search decriptions, it must be long for safety measures.
+	GetCmdArgString(CvarToSearch, sizeof(CvarToSearch));
 	
-	char Output[4096];
 	char CmdFlags[128];
 	
 	do
 	{
 		GetCommandFlagString(flags, CmdFlags, sizeof(CmdFlags));
 		
-		if(StrContains(buffer, CvarToSearch, false) == -1 && StrContains(description, CvarToSearch, false) == -1 && StrContains(CmdFlags, CvarToSearch, false) == -1)
+		Handle convar;
+		
+		char CvarValue[256];
+		
+		if(!isCommand)
+		{
+			convar = FindConVar(buffer);
+			
+			GetConVarString(convar, CvarValue, sizeof(CvarValue));
+		}
+		if(StrContains(buffer, CvarToSearch, false) == -1 && StrContains(description, CvarToSearch, false) == -1 && StrContains(CmdFlags, CvarToSearch, false) == -1 && (isCommand || StrContains(CvarValue, CvarToSearch, false) == -1))
 			continue;
 		
 		if(description[0] != EOS && description[0] != '-' && description[1] != ' ')
 			Format(description, sizeof(description), "- %s", description);
 			
 		if(isCommand)
-			Format(Output, sizeof(Output), "\"%s\"  %s %s", buffer, CmdFlags, description);
+			PrintToConsole(client, "\"%s\"  %s %s", buffer, CmdFlags, description);
 			
 		else
 		{	
-			char CvarValue[256];
+			//char CvarValue[256]; // This appears upper than here.
 			char CvarDefault[256];
 			char OutputDefault[256];
 			char OutputBounds[256];
 			float CvarUpper, CvarLower;
-			
-			Handle convar = FindConVar(buffer);
-			
-			GetConVarString(convar, CvarValue, sizeof(CvarValue));
 			
 			GetConVarDefault(convar, CvarDefault, sizeof(CvarDefault));
 			
@@ -5222,9 +5238,9 @@ public Action Command_FindCvar(int client, int args)
 			if(GetConVarBounds(convar, ConVarBound_Upper, CvarUpper))
 				Format(OutputBounds, sizeof(OutputBounds), "%s max. %f ", OutputBounds, CvarUpper);
 						
-			Format(Output, sizeof(Output), "\"%s\" = \"%s\" %s%s%s    %s", buffer, CvarValue, OutputDefault, OutputBounds, CmdFlags, description);
+			PrintToConsole(client, "\"%s\" = \"%s\" %s%s%s    %s", buffer, CvarValue, OutputDefault, OutputBounds, CmdFlags, description);
 		}
-		PrintToConsole(client, Output);
+		//PrintToConsole(client, Output);
 	}
 	while(FindNextConCommand(iterator, buffer, sizeof(buffer), isCommand, flags, description, sizeof(description)))
 	
@@ -6189,7 +6205,7 @@ stock void UC_GetAuthIdCookie(const char[] AuthId, const char[] CookieName, int 
 {
 	char sQuery[256];
 
-	Format(sQuery, sizeof(sQuery), "SELECT * FROM sm_cookies WHERE name = \"%s\"", CookieName); 
+	SQL_FormatQuery(dbLocal, sQuery, sizeof(sQuery), "SELECT * FROM sm_cookies WHERE name = \"%s\"", CookieName); 
 
 	Handle DP = CreateDataPack();
 	
@@ -6243,7 +6259,7 @@ public void SQLCB_FindCookieIdByName_GetAuthIdCookie(Handle db, Handle hndl, con
 	int ID = SQL_FetchInt(hndl, 0);
 
 	char sQuery[256];
-	Format(sQuery, sizeof(sQuery), "SELECT * FROM sm_cookie_cache WHERE cookie_id = %i AND player = \"%s\"", ID, AuthId);
+	SQL_FormatQuery(dbLocal, sQuery, sizeof(sQuery), "SELECT * FROM sm_cookie_cache WHERE cookie_id = %i AND player = \"%s\"", ID, AuthId);
 
 	DP = CreateDataPack();
 	
@@ -6316,7 +6332,7 @@ stock void UC_ResetCookieToValue(const char[] CookieName, const char[] Value, in
 {
 	char sQuery[256];
 
-	Format(sQuery, sizeof(sQuery), "SELECT * FROM sm_cookies WHERE name = \"%s\"", CookieName); 
+	SQL_FormatQuery(dbLocal, sQuery, sizeof(sQuery), "SELECT * FROM sm_cookies WHERE name = \"%s\"", CookieName); 
 
 	Handle DP = CreateDataPack();
 	
@@ -6373,7 +6389,7 @@ public void SQLCB_FindCookieIdByName_ResetCookieToValue(Handle db, Handle hndl, 
 	int ID = SQL_FetchInt(hndl, 0);
 
 	char sQuery[256];
-	Format(sQuery, sizeof(sQuery), "UPDATE sm_cookie_cache SET value = \"%s\" WHERE cookie_id = %i", Value, ID);
+	SQL_FormatQuery(dbLocal, sQuery, sizeof(sQuery), "UPDATE sm_cookie_cache SET value = \"%s\" WHERE cookie_id = %i", Value, ID);
 
 	DP = CreateDataPack();
 
