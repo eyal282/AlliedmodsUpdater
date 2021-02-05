@@ -14,7 +14,7 @@ new EngineVersion:GameName;
 
 #define PREFIX "\x09[\x04Insta-Defuse\x09]\x01 "
 
-new const String:PLUGIN_VERSION[] = "1.8";
+#define PLUGIN_VERSION "1.9"
 
 new Handle:hcv_NoobMargin = INVALID_HANDLE;
 new Handle:hcv_PrefDefault = INVALID_HANDLE;
@@ -216,9 +216,7 @@ stock AttemptInstantDefuse(client, exemptNade = 0)
 	else if(!IsClientInstantDefusePref(client))
 		return;
 		
-	new StartEnt = MaxClients + 1;
-		
-	new c4 = FindEntityByClassname(StartEnt, "planted_c4");
+	new c4 = FindEntityByClassname(-1, "planted_c4");
 	
 	if(c4 == -1)
 		return;
@@ -250,8 +248,9 @@ stock AttemptInstantDefuse(client, exemptNade = 0)
 		return;
 	}
 
-	new ent
-	if((ent = FindEntityByClassname(StartEnt, "hegrenade_projectile")) != -1)
+	new ent = -1;
+	
+	while((ent = FindEntityByClassname(ent, "hegrenade_projectile")) != -1)
 	{
 		if(ent != exemptNade)
 		{
@@ -265,7 +264,7 @@ stock AttemptInstantDefuse(client, exemptNade = 0)
 	
 	ent = -1;
 	
-	if((ent = FindEntityByClassname(StartEnt, "molotov_projectile")) != -1)
+	while((ent = FindEntityByClassname(ent, "molotov_projectile")) != -1)
 	{
 		if(ent != exemptNade)
 		{
@@ -276,7 +275,8 @@ stock AttemptInstantDefuse(client, exemptNade = 0)
 			return;
 		}
 	}
-	else if(hTimer_MolotovThreatEnd != INVALID_HANDLE)
+	
+	if(hTimer_MolotovThreatEnd != INVALID_HANDLE)
 	{
 		PrintToChatAll("%sMolotov too close to bomb, Good luck defusing!", PREFIX);
 		
