@@ -2,7 +2,7 @@
 {
 	"Version"
 	{
-		"Latest"	"2.2"
+		"Latest"	"3.0"
 	}
 	
 	"Notes" 	"Transfered repository."
