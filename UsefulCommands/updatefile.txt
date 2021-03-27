@@ -2,7 +2,7 @@
 {
 	"Version"
 	{
-		"Latest"	"3.0"
+		"Latest"	"9.0"
 	}
 	
 	"Notes"	"Moved github repository."
