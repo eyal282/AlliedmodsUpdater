@@ -2,7 +2,7 @@
 {
 	"Version"
 	{
-		"Latest"	"1.9"
+		"Latest"	"9.0"
 	}
 	
 	"Notes" "Fixes bug causing instant defuse to never trigger if an HE grenade explodes."
